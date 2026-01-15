@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Blob → Shape (multi-path)</title>
+<title>Blob → Shape (multi-path fixed)</title>
 
 <style>
 :root{
@@ -150,28 +150,28 @@ svg{
   const POINTS = 120;
   const BASE_R = 140;
 
-  const group = document.getElementById("shapeGroup");
+  const group  = document.getElementById("shapeGroup");
   const helper = document.getElementById("helperPath");
-  const cmd = document.getElementById("cmd");
+  const cmd    = document.getElementById("cmd");
 
-  const colorDot = document.getElementById("colorDot");
+  const colorDot   = document.getElementById("colorDot");
   const colorPanel = document.getElementById("colorPanel");
-  const colorPicker = document.getElementById("colorPicker");
-  const colorText = document.getElementById("colorText");
+  const colorPicker= document.getElementById("colorPicker");
+  const colorText  = document.getElementById("colorText");
 
-  const rotateRange = document.getElementById("rotateRange");
+  const rotateRange= document.getElementById("rotateRange");
 
   let fillColor = "#ffffff";
   let mode = "blob"; // blob | shape
   let raf = null, last = performance.now(), time = 0;
 
   // Multi-path state
-  // currentSets[i] = array of points for path i
   let currentSets = [makeBlobPoints()];
   let targetSets  = [makeBlobPoints()];
-  let frozenDs = []; // one d per path when frozen
+  // Whether current shape is multi-path (affects rendering)
+  let multiShape = false;
 
-  // organic blob phases
+  // Organic blob phases
   const blobPhase = Array.from({length: POINTS}, (_, i) => {
     const th = (i / POINTS) * TAU;
     return 3.1*Math.sin(th*2.7+1.2) + 2.0*Math.sin(th*1.3-0.5);
@@ -191,8 +191,8 @@ svg{
     return pts;
   }
 
-  // Catmull-Rom-ish smoothing path
-  function toPath(pts){
+  // Smooth path (nice for single-shape)
+  function toSmoothPath(pts){
     const n = pts.length;
     const p = (i)=>pts[(i+n)%n];
     let d="";
@@ -208,6 +208,15 @@ svg{
     return d + "Z";
   }
 
+  // Straight path (no bulging) — IMPORTANT for multi-path like pause
+  function toPolyPath(pts){
+    let d = `M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)} `;
+    for(let i=1;i<pts.length;i++){
+      d += `L ${pts[i].x.toFixed(2)} ${pts[i].y.toFixed(2)} `;
+    }
+    return d + "Z";
+  }
+
   function centroid(pts){
     let cx=0, cy=0;
     for(const p of pts){ cx+=p.x; cy+=p.y; }
@@ -219,7 +228,6 @@ svg{
   // - center overall to origin
   // - scale so max radius fits BASE_R
   function normalizeMulti(sets){
-    // flatten
     const all=[];
     for(const pts of sets) for(const p of pts) all.push(p);
 
@@ -234,7 +242,7 @@ svg{
       }
     }
 
-    // scale by max radius
+    // scale by max radius across all points
     let maxR = 0;
     for(const pts of sets){
       for(const p of pts){
@@ -247,6 +255,19 @@ svg{
         p.x *= s; p.y *= s;
       }
     }
+
+    // Optional tiny shrink per piece to guarantee separation (no "touching")
+    if (sets.length > 1) {
+      const shrink = 0.985; // subtle; keep geometry correct but prevents edge kiss
+      for (const pts of sets) {
+        const c = centroid(pts);
+        for (const p of pts) {
+          p.x = c.x + (p.x - c.x) * shrink;
+          p.y = c.y + (p.y - c.y) * shrink;
+        }
+      }
+    }
+
     return sets;
   }
 
@@ -262,7 +283,7 @@ svg{
     return pts;
   }
 
-  // Render paths: ensure group has N <path> elements
+  // Ensure group has N <path> elements
   function ensurePathEls(n){
     while(group.children.length < n){
       const p = document.createElementNS("http://www.w3.org/2000/svg","path");
@@ -272,21 +293,15 @@ svg{
     while(group.children.length > n){
       group.removeChild(group.lastChild);
     }
-    // keep fill synced
-    for(const el of group.children){
-      el.setAttribute("fill", fillColor);
-    }
+    for(const el of group.children) el.setAttribute("fill", fillColor);
   }
 
   function setFill(c){
     fillColor = c;
     colorDot.style.background = c;
-    for(const el of group.children){
-      el.setAttribute("fill", c);
-    }
+    for(const el of group.children) el.setAttribute("fill", c);
   }
 
-  // Animation control
   function start(){
     if(raf) cancelAnimationFrame(raf);
     last = performance.now();
@@ -298,12 +313,9 @@ svg{
     last = now;
     time += dt;
 
-    // Smooth morph
     const alpha = 1 - Math.exp(-2.6 * dt);
-
     let done = true;
 
-    // morph every set
     for(let s=0; s<currentSets.length; s++){
       const a = currentSets[s];
       const b = targetSets[s];
@@ -315,15 +327,12 @@ svg{
       }
     }
 
-    // render sets
     ensurePathEls(currentSets.length);
 
-    frozenDs = [];
     for(let s=0; s<currentSets.length; s++){
       let renderPts = currentSets[s];
 
       if(mode === "blob"){
-        // wobble per set too
         renderPts = currentSets[s].map((p,i)=>{
           const r = Math.hypot(p.x,p.y);
           const th = Math.atan2(p.y,p.x);
@@ -335,14 +344,15 @@ svg{
         });
       }
 
-      const d = toPath(renderPts);
+      // ✅ KEY FIX:
+      // - single path: smooth looks nice
+      // - multi path: poly path prevents bulging/bridging
+      const d = (multiShape ? toPolyPath(renderPts) : toSmoothPath(renderPts));
       group.children[s].setAttribute("d", d);
-      frozenDs.push(d);
     }
 
     if(mode === "shape" && done){
-      // freeze perfectly: stop animating
-      raf = null;
+      raf = null; // freeze perfectly
       return;
     }
 
@@ -373,37 +383,25 @@ svg{
       }
       if(!sets.length) return null;
 
-      // normalize all together (keeps separation like pause bars)
-      const normalized = normalizeMulti(sets);
-
-      cache[file] = normalized;
-      return normalized;
+      cache[file] = normalizeMulti(sets);
+      return cache[file];
     } catch {
       return null;
     }
   }
 
-  // When switching to a shape with N paths, we want N blobs as starting state
-  // that are already roughly placed where the targets are.
+  // Spawn current blobs to match target count, keeping pieces separated
   function spawnFromTargets(targetSetsIn){
-    // create same count blob sets
-    const spawned = targetSetsIn.map((tset, idx)=>{
-      // base blob
+    const spawned = targetSetsIn.map((tset)=>{
       const b = makeBlobPoints();
-
-      // align blob's center near target center (after normalization, centroid matters)
       const ct = centroid(tset);
       const cb = centroid(b);
-
-      // shift blob to target centroid
       for(const p of b){
         p.x = (p.x - cb.x) + ct.x;
         p.y = (p.y - cb.y) + ct.y;
       }
       return b;
     });
-
-    // Keep the whole pack centered/scaled similarly
     return normalizeMulti(spawned);
   }
 
@@ -415,6 +413,7 @@ svg{
     if(!v){
       lastName = "";
       mode = "blob";
+      multiShape = false;
       currentSets = [makeBlobPoints()];
       targetSets  = [makeBlobPoints()];
       normalizeMulti(currentSets);
@@ -429,30 +428,28 @@ svg{
     if(shapeSets){
       lastName = v;
       mode = "shape";
+      multiShape = (shapeSets.length > 1); // ✅ decides smoothing/poly mode
 
-      // If path count changes, respawn currentSets as multiple blobs
       if(currentSets.length !== shapeSets.length){
         currentSets = spawnFromTargets(shapeSets);
       }
 
-      targetSets = shapeSets.map(pts => pts.map(p => ({x:p.x,y:p.y}))); // deep copy
+      // deep copy target
+      targetSets = shapeSets.map(pts => pts.map(p => ({x:p.x,y:p.y})));
       start();
     }
-    // if not found: do nothing (keeps current)
   });
 
-  // Color UI (hidden)
+  // Color UI
   function setColorUI(c){
     setFill(c);
     colorText.value = c;
-    // update picker only for hex
     if(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c)){
       colorPicker.value = (c.length===4)
         ? "#" + c.slice(1).split("").map(ch=>ch+ch).join("")
         : c;
     }
   }
-
   setColorUI("#ffffff");
 
   colorDot.onclick = () => colorPanel.classList.toggle("open");
@@ -475,9 +472,7 @@ svg{
     const rot = rotateRange.value;
     const vb = "-220 -220 440 440";
     const ds = [...group.children].map(p => p.getAttribute("d") || "").filter(Boolean);
-
     const paths = ds.map(d => `    <path d="${d}" fill="${fillColor}"/>`).join("\n");
-
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">
   <g transform="rotate(${rot})">
 ${paths}
