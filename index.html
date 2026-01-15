@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Alive Blob (SVG Morph)</title>
+  <title>Alive Blob → Solid Shape (Export SVG)</title>
   <style>
     :root { --bg:#0b0f19; --fg:#e9eefc; --muted:#9aa6c3; }
     html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
@@ -12,16 +12,15 @@
       background: radial-gradient(1200px 700px at 50% 40%, #151d33 0%, var(--bg) 60%, #070a12 100%);
       color: var(--fg);
     }
-    .wrap { width:min(680px, 92vw); text-align:center; }
+    .wrap { width:min(760px, 92vw); text-align:center; }
     .stage {
-      width:min(420px, 78vw); aspect-ratio:1/1; margin:0 auto 18px;
+      width:min(420px, 78vw); aspect-ratio:1/1; margin:0 auto 16px;
       display:grid; place-items:center;
       filter: drop-shadow(0 18px 40px rgba(0,0,0,.55));
     }
     svg { width:100%; height:100%; overflow:visible; }
-    .hint { color:var(--muted); font-size:14px; margin-top:8px; }
     input {
-      width:min(520px, 92vw);
+      width:min(560px, 92vw);
       padding:14px 16px;
       border-radius:14px;
       border:1px solid rgba(255,255,255,.12);
@@ -31,67 +30,67 @@
       font-size:16px;
     }
     input:focus { border-color: rgba(135,177,255,.45); box-shadow: 0 0 0 4px rgba(135,177,255,.12); }
+    .row { margin-top:10px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+    button {
+      padding:10px 14px; border-radius:12px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.06);
+      color: var(--fg);
+      cursor:pointer;
+      font-size:14px;
+    }
+    button:hover { background: rgba(255,255,255,.10); }
     .chips { margin-top:10px; font-size:13px; color:var(--muted); }
     code { background: rgba(255,255,255,.06); padding:2px 6px; border-radius:8px; }
+    .hint { color:var(--muted); font-size:13px; margin-top:8px; line-height:1.35; }
   </style>
 </head>
 
 <body>
   <div class="wrap">
     <div class="stage">
-      <svg viewBox="-220 -220 440 440" aria-label="Morphing blob">
-        <defs>
-          <radialGradient id="g" cx="35%" cy="30%" r="80%">
-            <stop offset="0%" stop-color="#9ad1ff" stop-opacity="1"/>
-            <stop offset="55%" stop-color="#6d7dff" stop-opacity="0.95"/>
-            <stop offset="100%" stop-color="#3c2d6b" stop-opacity="0.9"/>
-          </radialGradient>
-
-          <!-- a subtle shine -->
-          <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
-            <feGaussianBlur in="SourceAlpha" stdDeviation="6" result="blur"/>
-            <feColorMatrix in="blur" type="matrix"
-              values="1 0 0 0 0
-                      0 1 0 0 0
-                      0 0 1 0 0
-                      0 0 0 .28 0" result="shadow"/>
-            <feMerge>
-              <feMergeNode in="shadow"/>
-              <feMergeNode in="SourceGraphic"/>
-            </feMerge>
-          </filter>
-        </defs>
-
-        <path id="blob" fill="url(#g)" filter="url(#soft)"></path>
+      <svg id="svgRoot" viewBox="-220 -220 440 440" aria-label="Morphing blob" xmlns="http://www.w3.org/2000/svg">
+        <path id="shapePath" fill="#ffffff"></path>
       </svg>
     </div>
 
     <input id="shapeInput" autocomplete="off" spellcheck="false"
            placeholder="Type: circle, triangle, square, pentagon, hexagon, star, blob … then press Enter" />
-    <div class="chips">
-      Try: <code>circle</code> <code>triangle</code> <code>square</code> <code>pentagon</code> <code>hexagon</code> <code>star</code> <code>blob</code>
+
+    <div class="row">
+      <button id="exportBtn" type="button">Export SVG</button>
+      <button id="copyBtn" type="button">Copy SVG</button>
+      <button id="resetBtn" type="button">Blob mode</button>
     </div>
-    <div class="hint">The blob “breathes” continuously and morphs smoothly to your requested shape.</div>
+
+    <div class="chips">
+      Shapes: <code>circle</code> <code>triangle</code> <code>square</code> <code>pentagon</code> <code>hexagon</code> <code>star</code> <code>blob</code>
+    </div>
+
+    <div class="hint">
+      Behavior: In <code>blob</code> mode it moves (alive). When you choose a real shape, it morphs slowly and then <b>stops moving</b>.
+      Export gives you a standalone SVG of the current final shape.
+    </div>
   </div>
 
 <script>
 (() => {
-  // ====== Helpers ======
+  // ====== Math helpers ======
   const TAU = Math.PI * 2;
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const lerp  = (a, b, t) => a + (b - a) * t;
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const normalize = (arr) => {
+    const avg = arr.reduce((s,v)=>s+v,0) / arr.length;
+    return arr.map(v => v / avg);
+  };
 
-  // Catmull-Rom -> Bezier path for smooth closed curve
+  // Catmull-Rom -> Bezier (smooth closed curve)
   function pointsToClosedPath(pts) {
-    // pts: [{x,y}, ...] closed implicitly
     const n = pts.length;
     const p = (i) => pts[(i + n) % n];
-
     let d = "";
+
     for (let i = 0; i < n; i++) {
       const p0 = p(i - 1), p1 = p(i), p2 = p(i + 1), p3 = p(i + 2);
-
-      // Catmull-Rom to cubic Bezier control points
       const c1x = p1.x + (p2.x - p0.x) / 6;
       const c1y = p1.y + (p2.y - p0.y) / 6;
       const c2x = p2.x - (p3.x - p1.x) / 6;
@@ -100,166 +99,251 @@
       if (i === 0) d += `M ${p1.x.toFixed(2)} ${p1.y.toFixed(2)} `;
       d += `C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)} `;
     }
-    d += "Z";
-    return d;
+    return d + "Z";
   }
 
-  // Regular n-gon radius function in polar coordinates
-  // r(theta) for a unit circumradius polygon (scaled later)
+  // Regular n-gon polar radius (circumradius 1)
   function ngonRadius(theta, n) {
     const a = TAU / n;
-    const t = ((theta % a) + a) % a;     // 0..a
-    const k = Math.cos(Math.PI / n) / Math.cos(t - a/2);
-    return k; // >= cos(pi/n)
+    const t = ((theta % a) + a) % a; // 0..a
+    return Math.cos(Math.PI / n) / Math.cos(t - a / 2);
   }
 
-  function makeBaseRadii(kind, count) {
-    // Returns array of base radii multipliers (around ~1)
+  // ====== Shape generators (as radial multipliers) ======
+  function makeRadii(kind, count) {
     const radii = new Array(count).fill(1);
 
-    if (kind === "circle") {
-      return radii.map(() => 1);
-    }
+    if (kind === "circle") return radii;
 
     if (kind === "triangle") {
-      for (let i=0; i<count; i++) {
-        const th = (i / count) * TAU;
-        radii[i] = ngonRadius(th, 3);
-      }
-      // normalize so average ~1
+      for (let i=0; i<count; i++) radii[i] = ngonRadius((i/count)*TAU, 3);
       return normalize(radii);
     }
-
     if (kind === "square") {
-      for (let i=0; i<count; i++) {
-        const th = (i / count) * TAU;
-        radii[i] = ngonRadius(th, 4);
-      }
+      for (let i=0; i<count; i++) radii[i] = ngonRadius((i/count)*TAU, 4);
       return normalize(radii);
     }
-
     if (kind === "pentagon") {
       for (let i=0; i<count; i++) radii[i] = ngonRadius((i/count)*TAU, 5);
       return normalize(radii);
     }
-
     if (kind === "hexagon") {
       for (let i=0; i<count; i++) radii[i] = ngonRadius((i/count)*TAU, 6);
       return normalize(radii);
     }
-
     if (kind === "star") {
-      // simple star: alternate inner/outer via cosine spikes
+      // A crisp-ish 5-spike star profile (still smoothed by curve)
+      const spikes = 5;
       for (let i=0; i<count; i++) {
         const th = (i / count) * TAU;
-        // 5-point star-ish
-        const spikes = 5;
         const s = (Math.cos(th * spikes) + 1) / 2; // 0..1
-        radii[i] = lerp(0.62, 1.18, s);
+        radii[i] = lerp(0.55, 1.25, s);
       }
       return normalize(radii);
     }
 
-    // "blob" default: smooth random-ish radii
-    // fixed seed-ish pattern using sines
+    // blob (alive base)
     for (let i=0; i<count; i++) {
       const th = (i / count) * TAU;
-      const v =
+      radii[i] =
         1 +
         0.16 * Math.sin(th * 2 + 0.8) +
         0.10 * Math.sin(th * 3 - 1.4) +
         0.07 * Math.sin(th * 5 + 2.2);
-      radii[i] = v;
     }
     return normalize(radii);
   }
 
-  function normalize(arr) {
-    const avg = arr.reduce((s,v)=>s+v,0) / arr.length;
-    return arr.map(v => v / avg);
-  }
+  // ====== Setup ======
+  const svgRoot = document.getElementById("svgRoot");
+  const pathEl  = document.getElementById("shapePath");
+  const input   = document.getElementById("shapeInput");
+  const exportBtn = document.getElementById("exportBtn");
+  const copyBtn   = document.getElementById("copyBtn");
+  const resetBtn  = document.getElementById("resetBtn");
 
-  // ====== Scene setup ======
-  const pathEl = document.getElementById("blob");
-  const input  = document.getElementById("shapeInput");
+  const POINTS = 96;     // smoother edges, still export-friendly
+  const BASE_R = 140;    // size inside viewBox
 
-  const POINTS = 72;         // more points = smoother
-  const BASE_R = 140;        // overall size
-  const wobble = {
-    amp: 0.08,               // how alive it feels (0..)
-    speed: 0.9
-  };
+  // "Alive" wobble only in blob mode
+  const wobbleAmp   = 0.08;
+  const wobbleSpeed = 0.9;
 
-  // Current + target radii (multipliers)
-  let current = makeBaseRadii("blob", POINTS);
-  let target  = makeBaseRadii("blob", POINTS);
+  // Current & target radii
+  let current = makeRadii("blob", POINTS);
+  let target  = makeRadii("blob", POINTS);
 
-  // per-vertex phase for "alive" wobble (deterministic)
+  // Mode controls motion:
+  // - "blob": animate (alive)
+  // - "shape": no wobble, no breathing, just morph until settled then stop changing
+  let mode = "blob";
+  let activeShape = "blob";
+
+  // Deterministic per-point phase offsets
   const phase = Array.from({length: POINTS}, (_, i) => {
     const th = (i / POINTS) * TAU;
     return 3.1 * Math.sin(th * 2.7 + 1.2) + 2.0 * Math.sin(th * 1.3 - 0.5);
   });
 
+  // Keep last exported geometry (for "stay still")
+  let frozenPathD = "";
+
+  // ====== Command handling ======
+  const known = ["circle","triangle","square","pentagon","hexagon","star","blob"];
+
   function setShape(nameRaw) {
     const name = (nameRaw || "").trim().toLowerCase();
-    const known = ["circle","triangle","square","pentagon","hexagon","star","blob"];
     const pick = known.includes(name) ? name : "blob";
-    target = makeBaseRadii(pick, POINTS);
+
+    activeShape = pick;
+    target = makeRadii(pick, POINTS);
+
+    if (pick === "blob") {
+      mode = "blob";
+    } else {
+      mode = "shape";
+    }
   }
 
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") setShape(input.value);
   });
 
-  // Also morph as you type (optional, feels nice)
-  input.addEventListener("input", () => {
-    const v = input.value.trim().toLowerCase();
-    if (["circle","triangle","square","pentagon","hexagon","star","blob"].includes(v)) {
-      setShape(v);
-    }
+  resetBtn.addEventListener("click", () => {
+    input.value = "blob";
+    setShape("blob");
   });
+
+  // ====== Build path from current radii ======
+  function buildPath(time, allowWobble) {
+    const pts = [];
+    for (let i=0; i<POINTS; i++) {
+      const th = (i / POINTS) * TAU;
+
+      let wobble = 1;
+      if (allowWobble) {
+        wobble =
+          1 +
+          wobbleAmp * Math.sin(time * (wobbleSpeed * 2.0) + phase[i]) +
+          (wobbleAmp * 0.55) * Math.sin(time * (wobbleSpeed * 3.1) + phase[i] * 0.7);
+      }
+
+      const r = BASE_R * current[i] * wobble;
+      pts.push({ x: r * Math.cos(th), y: r * Math.sin(th) });
+    }
+    return pointsToClosedPath(pts);
+  }
 
   // ====== Animation loop ======
   let last = performance.now();
-  let t = 0;
+  let time = 0;
+
+  // Morph speed: slower looks nicer
+  const morphSpeed = 3.0;
 
   function tick(now) {
     const dt = (now - last) / 1000;
     last = now;
-    t += dt;
+    time += dt;
 
-    // Smooth morph (critically damped-ish)
-    // You can tune 'morphSpeed' for faster/slower transitions.
-    const morphSpeed = 6.5;
+    // Smooth morph step
     const alpha = 1 - Math.exp(-morphSpeed * dt);
+    let maxDelta = 0;
 
     for (let i=0; i<POINTS; i++) {
+      const before = current[i];
       current[i] = lerp(current[i], target[i], alpha);
+      maxDelta = Math.max(maxDelta, Math.abs(current[i] - before));
     }
 
-    // Build points with "alive" wobble layered on top
-    const pts = [];
-    for (let i=0; i<POINTS; i++) {
-      const th = (i / POINTS) * TAU;
-      const breathe = 1 + 0.02 * Math.sin(t * 1.3); // whole-shape breathing
+    const allowWobble = (mode === "blob");
+    const d = buildPath(time, allowWobble);
+    pathEl.setAttribute("d", d);
 
-      // vertex wobble (smooth, organic)
-      const w =
-        1 +
-        wobble.amp * Math.sin(t * (wobble.speed * 2.0) + phase[i]) +
-        (wobble.amp * 0.55) * Math.sin(t * (wobble.speed * 3.1) + phase[i] * 0.7);
-
-      const r = BASE_R * current[i] * w * breathe;
-      pts.push({ x: r * Math.cos(th), y: r * Math.sin(th) });
+    // If we are in a real shape mode, once morph is basically done, freeze it (no movement)
+    if (mode === "shape") {
+      // When the morph deltas are tiny, stop updating and lock the final path.
+      if (maxDelta < 0.00025) {
+        frozenPathD = buildPath(time, false); // build without wobble
+        pathEl.setAttribute("d", frozenPathD);
+        // Stop the animation loop to keep it perfectly still
+        return;
+      }
     }
 
-    pathEl.setAttribute("d", pointsToClosedPath(pts));
     requestAnimationFrame(tick);
   }
 
-  // Start with a gentle circle-ish blob
+  // Start
   setShape("blob");
   requestAnimationFrame(tick);
+
+  // If user switches from shape back to blob, we need to restart the loop
+  function restartLoopIfNeeded() {
+    // If we were stopped (in shape mode), restart animation frame
+    last = performance.now();
+    requestAnimationFrame(tick);
+  }
+
+  // Wrap setShape to restart loop when needed
+  const _setShape = setShape;
+  setShape = (name) => {
+    const wasStopped = (mode === "shape" && frozenPathD);
+    _setShape(name);
+    frozenPathD = "";
+    // Always restart loop when changing shapes
+    restartLoopIfNeeded();
+  };
+
+  // Update input-driven setShape to use wrapped version
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") setShape(input.value);
+  });
+
+  // ====== Export current shape as a standalone SVG ======
+  function getExportPathD() {
+    // If we froze, use frozen; otherwise use current attribute
+    return frozenPathD || pathEl.getAttribute("d") || "";
+  }
+
+  function exportSVGString() {
+    const d = getExportPathD();
+    const vb = svgRoot.getAttribute("viewBox") || "-220 -220 440 440";
+    return (
+`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">
+  <path d="${d}" fill="#ffffff"/>
+</svg>`
+    );
+  }
+
+  function downloadText(filename, text) {
+    const blob = new Blob([text], {type: "image/svg+xml;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  exportBtn.addEventListener("click", () => {
+    const name = (activeShape && activeShape !== "blob") ? activeShape : "shape";
+    downloadText(`${name}.svg`, exportSVGString());
+  });
+
+  copyBtn.addEventListener("click", async () => {
+    const txt = exportSVGString();
+    try {
+      await navigator.clipboard.writeText(txt);
+      copyBtn.textContent = "Copied!";
+      setTimeout(() => (copyBtn.textContent = "Copy SVG"), 900);
+    } catch {
+      // fallback: prompt
+      window.prompt("Copy SVG:", txt);
+    }
+  });
 })();
 </script>
 </body>
