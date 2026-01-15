@@ -1,614 +1,325 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Alive Blob → Shape (SVG paste) + Color + Export</title>
-  <style>
-    :root { --bg:#0b0f19; --fg:#e9eefc; --muted:#9aa6c3; }
-    html, body { height:100%; margin:0; }
-    body{
-      background: radial-gradient(1200px 700px at 50% 40%, #151d33 0%, var(--bg) 60%, #070a12 100%);
-      color: var(--fg);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      overflow:hidden;
-    }
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Blob → Shape (Hybrid SVG)</title>
 
-    /* Center stage */
-    .stage{
-      position:fixed;
-      inset:0;
-      display:grid;
-      place-items:center;
-      pointer-events:none;
-    }
-    svg{ width:min(520px, 86vw); height:auto; filter: drop-shadow(0 18px 40px rgba(0,0,0,.55)); }
+<style>
+:root{
+  --bg:#0b0f19;
+  --fg:#e9eefc;
+  --ui:rgba(255,255,255,.08);
+  --ui-b:rgba(255,255,255,.14);
+}
+html,body{height:100%;margin:0}
+body{
+  background:radial-gradient(1200px 700px at 50% 40%,#151d33 0%,var(--bg) 60%,#070a12 100%);
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+  color:var(--fg);
+  overflow:hidden;
+}
 
-    /* Input bottom center */
-    .bottom{
-      position:fixed;
-      left:50%;
-      bottom:22px;
-      transform:translateX(-50%);
-      width:min(740px, 92vw);
-      pointer-events:auto;
-    }
-    input[type="text"]{
-      width:100%;
-      padding:14px 16px;
-      border-radius:14px;
-      border:1px solid rgba(255,255,255,.12);
-      background: rgba(255,255,255,.06);
-      color: var(--fg);
-      outline:none;
-      font-size:16px;
-    }
-    input[type="text"]:focus{
-      border-color: rgba(135,177,255,.45);
-      box-shadow: 0 0 0 4px rgba(135,177,255,.12);
-    }
+/* center */
+.stage{
+  position:fixed;
+  inset:0;
+  display:grid;
+  place-items:center;
+  pointer-events:none;
+}
+svg{
+  width:min(520px,86vw);
+  height:auto;
+  filter:drop-shadow(0 18px 40px rgba(0,0,0,.55));
+}
 
-    /* Top-right toolbar */
-    .toolbar{
-      position:fixed;
-      top:14px;
-      right:14px;
-      display:flex;
-      gap:10px;
-      align-items:center;
-      pointer-events:auto;
-    }
-    .btn, .pill{
-      border:1px solid rgba(255,255,255,.14);
-      background: rgba(255,255,255,.06);
-      color: var(--fg);
-      border-radius:12px;
-      padding:10px 12px;
-      font-size:14px;
-      cursor:pointer;
-      user-select:none;
-    }
-    .btn:hover{ background: rgba(255,255,255,.10); }
-    .pill{ display:flex; align-items:center; gap:10px; cursor:default; }
-    input[type="color"]{
-      width:42px; height:32px; border:none; background:transparent; padding:0; cursor:pointer;
-    }
-    .colorText{
-      width:120px;
-      padding:8px 10px;
-      border-radius:10px;
-      border:1px solid rgba(255,255,255,.14);
-      background: rgba(255,255,255,.06);
-      color: var(--fg);
-      outline:none;
-      font-size:13px;
-    }
+/* input */
+.bottom{
+  position:fixed;
+  left:50%;
+  bottom:22px;
+  transform:translateX(-50%);
+  width:min(720px,92vw);
+}
+.bottom input{
+  width:100%;
+  padding:14px 16px;
+  border-radius:14px;
+  border:1px solid var(--ui-b);
+  background:var(--ui);
+  color:var(--fg);
+  outline:none;
+  font-size:16px;
+}
 
-    /* Info modal */
-    .modal{
-      position:fixed;
-      inset:0;
-      background: rgba(0,0,0,.55);
-      display:none;
-      align-items:center;
-      justify-content:center;
-      pointer-events:auto;
-    }
-    .modal.open{ display:flex; }
-    .card{
-      width:min(720px, 92vw);
-      background: rgba(10,14,25,.92);
-      border:1px solid rgba(255,255,255,.12);
-      border-radius:16px;
-      padding:16px 16px 14px;
-      line-height:1.45;
-      box-shadow: 0 18px 60px rgba(0,0,0,.6);
-    }
-    .card h3{ margin:0 0 8px; font-size:16px; }
-    .card p{ margin:8px 0; color: var(--muted); font-size:14px; }
-    .card code{
-      background: rgba(255,255,255,.06);
-      padding:2px 6px;
-      border-radius:8px;
-      color: var(--fg);
-      font-size: 13px;
-    }
-    .card .row{ display:flex; justify-content:flex-end; margin-top:12px; }
-  </style>
+/* toolbar */
+.toolbar{
+  position:fixed;
+  top:14px;
+  right:14px;
+  display:flex;
+  gap:10px;
+  align-items:center;
+}
+.btn{
+  border:1px solid var(--ui-b);
+  background:var(--ui);
+  color:var(--fg);
+  border-radius:12px;
+  padding:10px 12px;
+  font-size:14px;
+  cursor:pointer;
+}
+.btn:hover{background:rgba(255,255,255,.12)}
+
+/* color */
+.color{
+  position:relative;
+}
+.color-dot{
+  width:32px;height:32px;
+  border-radius:50%;
+  border:1px solid var(--ui-b);
+  cursor:pointer;
+}
+.color-panel{
+  position:absolute;
+  top:40px;
+  right:0;
+  background:rgba(10,14,25,.95);
+  border:1px solid var(--ui-b);
+  border-radius:12px;
+  padding:10px;
+  display:none;
+  gap:8px;
+}
+.color-panel.open{display:flex}
+.color-panel input[type="color"]{width:42px;height:32px;border:none;background:none}
+.color-panel input[type="text"]{
+  width:120px;
+  background:var(--ui);
+  border:1px solid var(--ui-b);
+  color:var(--fg);
+  border-radius:8px;
+  padding:6px 8px;
+}
+
+/* rotate */
+.rotate{
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.rotate input{width:80px}
+</style>
 </head>
 
 <body>
-  <!-- Top-right -->
-  <div class="toolbar">
-    <div class="pill" title="Fill color">
-      <span style="color:var(--muted); font-size:13px;">Color</span>
-      <input id="colorPicker" type="color" value="#ffffff" />
-      <input id="colorText" class="colorText" type="text" value="#ffffff" spellcheck="false" />
-    </div>
-    <button id="exportBtn" class="btn" type="button">Export</button>
-    <button id="copyBtn" class="btn" type="button">Copy</button>
-    <button id="infoBtn" class="btn" type="button">Info</button>
-  </div>
 
-  <!-- Center SVG -->
-  <div class="stage" aria-hidden="true">
-    <svg id="svgRoot" viewBox="-220 -220 440 440" xmlns="http://www.w3.org/2000/svg">
-      <path id="shapePath" fill="#ffffff"></path>
-      <!-- helper path for sampling pasted SVG/path -->
-      <path id="helperPath" fill="none" stroke="none" d="" style="visibility:hidden;"></path>
-    </svg>
-  </div>
-
-  <!-- Bottom input -->
-  <div class="bottom">
-    <input id="cmd" type="text" autocomplete="off" spellcheck="false"
-      placeholder="Type a shape (circle/triangle/square/ngon 9/star 7), OR paste an SVG snippet (<svg...>), OR paste a path starting with M...  (empty = blob)" />
-  </div>
-
-  <!-- Info modal -->
-  <div id="modal" class="modal" role="dialog" aria-modal="true" aria-label="Info">
-    <div class="card">
-      <h3>How it works</h3>
-      <p>
-        • When the input is <b>empty</b>, it’s in <code>blob</code> mode (alive / moving).<br/>
-        • Type a shape and press <b>Enter</b> → it morphs slowly and then freezes perfectly.<br/>
-        • You can paste <b>full SVG</b> like <code>&lt;svg ...&gt;...&lt;/svg&gt;</code> (it uses the first <code>&lt;path d="..."&gt;</code>)<br/>
-        • Or paste a raw path string that starts with <code>M ...</code>.
-      </p>
-      <p>
-        Examples: <code>circle</code> <code>triangle</code> <code>square</code> <code>ngon 9</code> <code>star 7</code><br/>
-        Color: type a CSS color in the color box (e.g. <code>#ffffff</code>, <code>hotpink</code>, <code>rgb(255,0,0)</code>)
-      </p>
-      <div class="row">
-        <button id="closeInfo" class="btn" type="button">Close</button>
-      </div>
+<!-- toolbar -->
+<div class="toolbar">
+  <div class="color">
+    <div id="colorDot" class="color-dot"></div>
+    <div id="colorPanel" class="color-panel">
+      <input id="colorPicker" type="color" value="#ffffff"/>
+      <input id="colorText" type="text" value="#ffffff"/>
     </div>
   </div>
+
+  <div class="rotate">
+    <span>↻</span>
+    <input id="rotateRange" type="range" min="0" max="360" value="0"/>
+  </div>
+
+  <button id="exportBtn" class="btn">Export</button>
+  <button id="copyBtn" class="btn">Copy</button>
+  <button id="infoBtn" class="btn">Info</button>
+</div>
+
+<!-- svg -->
+<div class="stage">
+<svg id="svgRoot" viewBox="-220 -220 440 440" xmlns="http://www.w3.org/2000/svg">
+  <g id="shapeGroup">
+    <path id="shapePath" fill="#ffffff"></path>
+  </g>
+  <path id="helperPath" fill="none" stroke="none" visibility="hidden"/>
+</svg>
+</div>
+
+<!-- input -->
+<div class="bottom">
+  <input id="cmd" placeholder="type a shape name (e.g. lightning bolt) or clear for blob"/>
+</div>
 
 <script>
 (() => {
-  // ========= Basics =========
-  const TAU = Math.PI * 2;
-  const lerp = (a,b,t) => a + (b-a)*t;
+const TAU=Math.PI*2, lerp=(a,b,t)=>a+(b-a)*t;
+const POINTS=120, BASE_R=140;
 
-  const svgRoot = document.getElementById("svgRoot");
-  const pathEl  = document.getElementById("shapePath");
-  const helper  = document.getElementById("helperPath");
+const pathEl=document.getElementById("shapePath");
+const helper=document.getElementById("helperPath");
+const cmd=document.getElementById("cmd");
+const group=document.getElementById("shapeGroup");
 
-  const cmdInput = document.getElementById("cmd");
+const colorDot=document.getElementById("colorDot");
+const colorPanel=document.getElementById("colorPanel");
+const colorPicker=document.getElementById("colorPicker");
+const colorText=document.getElementById("colorText");
 
-  const colorPicker = document.getElementById("colorPicker");
-  const colorText   = document.getElementById("colorText");
+const rotateRange=document.getElementById("rotateRange");
 
-  const exportBtn = document.getElementById("exportBtn");
-  const copyBtn   = document.getElementById("copyBtn");
-  const infoBtn   = document.getElementById("infoBtn");
-  const modal     = document.getElementById("modal");
-  const closeInfo = document.getElementById("closeInfo");
+let mode="blob", currentPts=blobPts(), targetPts=blobPts();
+let frozenD="", raf=null, time=0, last=performance.now();
 
-  const POINTS = 120;   // smooth
-  const BASE_R = 140;
-
-  // Blob motion only in blob mode
-  const wobbleAmp = 0.085;
-  const wobbleSpeed = 0.95;
-
-  // Modes:
-  // blob: animate continuously
-  // shape: morph to target then freeze (stop animation)
-  let mode = "blob";
-  let activeLabel = "blob";
-
-  let currentPts = makeBlobBasePoints(POINTS);
-  let targetPts  = makeBlobBasePoints(POINTS);
-
-  // deterministic phases for wobble
-  const phase = Array.from({length: POINTS}, (_, i) => {
-    const th = (i / POINTS) * TAU;
-    return 3.1 * Math.sin(th * 2.7 + 1.2) + 2.0 * Math.sin(th * 1.3 - 0.5);
-  });
-
-  let frozenD = ""; // if set, we’re frozen for export and display
-  let rafId = null;
-  let last = performance.now();
-  let time = 0;
-
-  // Slow morph as requested
-  const morphSpeed = 2.6;
-
-  // ========= Geometry helpers =========
-  function pointsToClosedPath(pts) {
-    const n = pts.length;
-    const p = (i) => pts[(i + n) % n];
-    let d = "";
-    for (let i = 0; i < n; i++) {
-      const p0 = p(i - 1), p1 = p(i), p2 = p(i + 1), p3 = p(i + 2);
-      const c1x = p1.x + (p2.x - p0.x) / 6;
-      const c1y = p1.y + (p2.y - p0.y) / 6;
-      const c2x = p2.x - (p3.x - p1.x) / 6;
-      const c2y = p2.y - (p3.y - p1.y) / 6;
-
-      if (i === 0) d += `M ${p1.x.toFixed(2)} ${p1.y.toFixed(2)} `;
-      d += `C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)} `;
-    }
-    return d + "Z";
+/* ---------- geometry ---------- */
+function blobPts(){
+  const pts=[];
+  for(let i=0;i<POINTS;i++){
+    const t=i/POINTS*TAU;
+    const m=1+.16*Math.sin(t*2)+.1*Math.sin(t*3)+.07*Math.sin(t*5);
+    pts.push({x:BASE_R*m*Math.cos(t),y:BASE_R*m*Math.sin(t)});
   }
-
-  function normalizePointsToRadius(pts, targetR=BASE_R) {
-    // center then scale by max radius
-    const c = pts.reduce((s,p)=>({x:s.x+p.x,y:s.y+p.y}), {x:0,y:0});
-    c.x /= pts.length; c.y /= pts.length;
-    const centered = pts.map(p => ({x:p.x-c.x, y:p.y-c.y}));
-
-    let maxR = 0;
-    for (const p of centered) maxR = Math.max(maxR, Math.hypot(p.x,p.y));
-    const scale = maxR === 0 ? 1 : (targetR / maxR);
-    return centered.map(p => ({x:p.x*scale, y:p.y*scale}));
+  return normalize(pts);
+}
+function normalize(pts){
+  let cx=0,cy=0;
+  pts.forEach(p=>{cx+=p.x;cy+=p.y});
+  cx/=pts.length;cy/=pts.length;
+  pts=pts.map(p=>({x:p.x-cx,y:p.y-cy}));
+  let max=0;pts.forEach(p=>max=Math.max(max,Math.hypot(p.x,p.y)));
+  const s=BASE_R/max;
+  return pts.map(p=>({x:p.x*s,y:p.y*s}));
+}
+function toPath(pts){
+  const p=i=>pts[(i+pts.length)%pts.length];
+  let d="";
+  for(let i=0;i<pts.length;i++){
+    const p0=p(i-1),p1=p(i),p2=p(i+1),p3=p(i+2);
+    const c1x=p1.x+(p2.x-p0.x)/6;
+    const c1y=p1.y+(p2.y-p0.y)/6;
+    const c2x=p2.x-(p3.x-p1.x)/6;
+    const c2y=p2.y-(p3.y-p1.y)/6;
+    if(!i)d+=`M ${p1.x} ${p1.y} `;
+    d+=`C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p2.x} ${p2.y} `;
   }
-
-  function dist(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
-
-  function resampleClosedPolyline(verts, count) {
-    const pts = verts.slice();
-    const segs = [];
-    let total = 0;
-    for (let i=0; i<pts.length; i++) {
-      const a = pts[i], b = pts[(i+1)%pts.length];
-      const L = dist(a,b);
-      segs.push(L);
-      total += L;
-    }
-    const step = total / count;
-
-    const out = [];
-    let segIndex = 0;
-    let segPos = 0;
-    let traveled = 0;
-
-    let a = pts[0];
-    let b = pts[1 % pts.length];
-    let segLen = segs[0];
-
-    for (let i=0; i<count; i++) {
-      const targetDist = i * step;
-      while (traveled + (segLen - segPos) < targetDist) {
-        traveled += (segLen - segPos);
-        segIndex = (segIndex + 1) % pts.length;
-        a = pts[segIndex];
-        b = pts[(segIndex + 1) % pts.length];
-        segLen = segs[segIndex];
-        segPos = 0;
-      }
-      const remain = targetDist - traveled;
-      const t = segLen === 0 ? 0 : (segPos + remain) / segLen;
-      out.push({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) });
-    }
-    return out;
+  return d+"Z";
+}
+function ptsFromPath(d){
+  helper.setAttribute("d",d);
+  const L=helper.getTotalLength();
+  const pts=[];
+  for(let i=0;i<POINTS;i++){
+    const p=helper.getPointAtLength(i/POINTS*L);
+    pts.push({x:p.x,y:p.y});
   }
+  return normalize(pts);
+}
 
-  // ========= Built-in shapes =========
-  function makeCirclePoints(count, r=BASE_R) {
-    const pts = [];
-    for (let i=0; i<count; i++) {
-      const th = (i / count) * TAU;
-      pts.push({ x: r * Math.cos(th), y: r * Math.sin(th) });
-    }
+/* ---------- shape loading ---------- */
+let cache={};
+async function loadShape(name){
+  const file=name.toLowerCase().replace(/\s+/g,"-")+".svg";
+  if(cache[file]) return cache[file];
+  try{
+    const res=await fetch("shapes/"+file);
+    if(!res.ok) return null;
+    const txt=await res.text();
+    const doc=new DOMParser().parseFromString(txt,"image/svg+xml");
+    const path=doc.querySelector("path");
+    if(!path) return null;
+    const pts=ptsFromPath(path.getAttribute("d"));
+    cache[file]=pts;
     return pts;
+  }catch{return null}
+}
+
+/* ---------- animation ---------- */
+function start(){
+  if(raf) cancelAnimationFrame(raf);
+  last=performance.now();
+  raf=requestAnimationFrame(tick);
+}
+function tick(now){
+  const dt=(now-last)/1000;last=now;time+=dt;
+  let done=true;
+  for(let i=0;i<POINTS;i++){
+    const a=currentPts[i],b=targetPts[i];
+    a.x=lerp(a.x,b.x,1-Math.exp(-3*dt));
+    a.y=lerp(a.y,b.y,1-Math.exp(-3*dt));
+    if(Math.hypot(a.x-b.x,a.y-b.y)>0.05) done=false;
   }
-
-  function makeNgonPoints(count, n, r=BASE_R, rotation=-Math.PI/2) {
-    const verts = [];
-    for (let k=0; k<n; k++) {
-      const th = rotation + (k / n) * TAU;
-      verts.push({ x: r * Math.cos(th), y: r * Math.sin(th) });
-    }
-    return resampleClosedPolyline(verts, count);
+  let render=currentPts;
+  if(mode==="blob"){
+    render=currentPts.map((p,i)=>{
+      const r=Math.hypot(p.x,p.y);
+      const th=Math.atan2(p.y,p.x);
+      const w=1+.08*Math.sin(time*2+i);
+      return{x:r*w*Math.cos(th),y:r*w*Math.sin(th)};
+    });
   }
-
-  function makeStarPoints(count, spikes=5, inner=0.52, outer=1.0, r=BASE_R, rotation=-Math.PI/2) {
-    const verts = [];
-    const total = spikes * 2;
-    for (let k=0; k<total; k++) {
-      const isOuter = (k % 2 === 0);
-      const rr = r * (isOuter ? outer : inner);
-      const th = rotation + (k / total) * TAU;
-      verts.push({ x: rr * Math.cos(th), y: rr * Math.sin(th) });
-    }
-    return resampleClosedPolyline(verts, count);
+  const d=toPath(render);
+  pathEl.setAttribute("d",d);
+  if(mode==="shape" && done){
+    frozenD=d;raf=null;return;
   }
+  raf=requestAnimationFrame(tick);
+}
 
-  function makeBlobBasePoints(count, r=BASE_R) {
-    const pts = [];
-    for (let i=0; i<count; i++) {
-      const th = (i / count) * TAU;
-      const mult =
-        1 +
-        0.16 * Math.sin(th * 2 + 0.8) +
-        0.10 * Math.sin(th * 3 - 1.4) +
-        0.07 * Math.sin(th * 5 + 2.2);
-      pts.push({ x: (r * mult) * Math.cos(th), y: (r * mult) * Math.sin(th) });
-    }
-    return normalizePointsToRadius(pts, r);
+/* ---------- input logic ---------- */
+let lastName="";
+cmd.addEventListener("input", async()=>{
+  const v=cmd.value.trim();
+  if(!v){
+    mode="blob";targetPts=blobPts();start();return;
   }
-
-  // ========= Pasting SVG / Path =========
-  function looksLikeSVGSnippet(str) {
-    const s = str.trim();
-    return s.startsWith("<svg") || s.startsWith("<SVG");
+  if(v===lastName) return;
+  const pts=await loadShape(v);
+  if(pts){
+    lastName=v;
+    mode="shape";
+    targetPts=pts;
+    frozenD="";
+    start();
   }
-  function looksLikePath(str) {
-    const s = str.trim();
-    return /^[Mm]\s*[-\d.]/.test(s);
-  }
+});
 
-  function extractPathsFromSVG(svgText) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(svgText, "image/svg+xml");
-    const svg = doc.querySelector("svg");
-    if (!svg) return [];
-    const paths = [...svg.querySelectorAll("path")];
-    return paths
-      .map(p => ({ d: p.getAttribute("d"), fill: p.getAttribute("fill") }))
-      .filter(p => typeof p.d === "string" && p.d.trim().length > 0);
-  }
+/* ---------- color ---------- */
+function setColor(c){
+  pathEl.setAttribute("fill",c);
+  colorDot.style.background=c;
+}
+setColor("#ffffff");
 
-  function pointsFromPathD(d, count) {
-    try {
-      helper.setAttribute("d", d);
-      const len = helper.getTotalLength();
-      if (!isFinite(len) || len <= 0) return null;
-      const pts = [];
-      for (let i=0; i<count; i++) {
-        const p = helper.getPointAtLength((i / count) * len);
-        pts.push({ x: p.x, y: p.y });
-      }
-      return normalizePointsToRadius(pts, BASE_R);
-    } catch {
-      return null;
-    }
-  }
+colorDot.onclick=()=>colorPanel.classList.toggle("open");
+colorPicker.oninput=()=>{setColor(colorPicker.value);colorText.value=colorPicker.value};
+colorText.onchange=()=>setColor(colorText.value);
+document.addEventListener("click",e=>{
+  if(!colorPanel.contains(e.target)&&e.target!==colorDot)colorPanel.classList.remove("open");
+});
 
-  function pointsFromSVGSnippet(svgText, count) {
-    const paths = extractPathsFromSVG(svgText);
-    if (!paths.length) return null;
+/* ---------- rotate ---------- */
+rotateRange.oninput=()=>{
+  group.setAttribute("transform",`rotate(${rotateRange.value})`);
+};
 
-    // Use FIRST path only (keeps it as a single solid shape, best for your morph/export tool)
-    // If you want multi-layer SVG support later, we can extend it.
-    const first = paths[0];
+/* ---------- export ---------- */
+function svgString(){
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-220 -220 440 440">
+  <g transform="rotate(${rotateRange.value})">
+    <path d="${frozenD||pathEl.getAttribute("d")}" fill="${pathEl.getAttribute("fill")}"/>
+  </g>
+</svg>`;
+}
+document.getElementById("exportBtn").onclick=()=>{
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([svgString()],{type:"image/svg+xml"}));
+  a.download="shape.svg";a.click();
+};
+document.getElementById("copyBtn").onclick=()=>navigator.clipboard.writeText(svgString());
 
-    // If pasted svg has fill, adopt it (optional; comment out if you prefer to keep your chosen color)
-    if (first.fill) setColor(first.fill);
-
-    return pointsFromPathD(first.d, count);
-  }
-
-  // ========= Color =========
-  function setColor(val) {
-    const s = (val || "").trim();
-    if (!s) return;
-
-    // validate via CSS
-    const test = document.createElement("div");
-    test.style.color = "";
-    test.style.color = s;
-    if (!test.style.color) return;
-
-    pathEl.setAttribute("fill", s);
-    colorText.value = s;
-
-    // update picker if hex
-    if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(s)) {
-      colorPicker.value = (s.length === 4) ? ("#" + s.slice(1).split("").map(ch=>ch+ch).join("")) : s;
-    }
-  }
-
-  colorPicker.addEventListener("input", () => setColor(colorPicker.value));
-  colorText.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") setColor(colorText.value);
-  });
-
-  // ========= Mode / target =========
-  function setTargetPoints(label, pts) {
-    activeLabel = label;
-    targetPts = pts;
-
-    frozenD = "";
-    if (label === "blob") {
-      mode = "blob";
-    } else {
-      mode = "shape";
-    }
-    restartLoop();
-  }
-
-  // ========= Command handling =========
-  function handleCommand(raw) {
-    const input = raw.trim();
-
-    // Empty input => blob mode (alive)
-    if (!input) {
-      setTargetPoints("blob", makeBlobBasePoints(POINTS));
-      return;
-    }
-
-    // Allow multiple commands separated by ";"
-    const parts = input.split(";").map(p => p.trim()).filter(Boolean);
-
-    for (const part of parts) {
-      const lower = part.toLowerCase();
-
-      // color command: "color hotpink"
-      if (lower.startsWith("color ")) {
-        setColor(part.slice(6));
-        continue;
-      }
-
-      // full SVG snippet pasted
-      if (looksLikeSVGSnippet(part)) {
-        const pts = pointsFromSVGSnippet(part, POINTS);
-        if (pts) setTargetPoints("custom", pts);
-        continue;
-      }
-
-      // raw path pasted
-      if (looksLikePath(part)) {
-        const pts = pointsFromPathD(part, POINTS);
-        if (pts) setTargetPoints("custom", pts);
-        continue;
-      }
-
-      // "path: M ... Z"
-      if (lower.startsWith("path:")) {
-        const d = part.slice(5).trim();
-        const pts = pointsFromPathD(d, POINTS);
-        if (pts) setTargetPoints("custom", pts);
-        continue;
-      }
-
-      // built-ins (still available)
-      if (lower === "circle") { setTargetPoints("circle", makeCirclePoints(POINTS, BASE_R)); continue; }
-      if (lower === "triangle") { setTargetPoints("triangle", makeNgonPoints(POINTS, 3)); continue; }
-      if (lower === "square") { setTargetPoints("square", makeNgonPoints(POINTS, 4)); continue; }
-      if (lower === "pentagon") { setTargetPoints("pentagon", makeNgonPoints(POINTS, 5)); continue; }
-      if (lower === "hexagon") { setTargetPoints("hexagon", makeNgonPoints(POINTS, 6)); continue; }
-
-      if (lower.startsWith("ngon ")) {
-        const n = parseInt(lower.split(/\s+/)[1], 10);
-        if (Number.isFinite(n) && n >= 3 && n <= 200) setTargetPoints(`ngon${n}`, makeNgonPoints(POINTS, n));
-        continue;
-      }
-
-      if (lower.startsWith("star ")) {
-        const n = parseInt(lower.split(/\s+/)[1], 10);
-        if (Number.isFinite(n) && n >= 3 && n <= 50) setTargetPoints(`star${n}`, makeStarPoints(POINTS, n, 0.52, 1.0));
-        continue;
-      }
-
-      if (lower === "blob") {
-        // accept explicit blob too
-        setTargetPoints("blob", makeBlobBasePoints(POINTS));
-        continue;
-      }
-
-      // Unknown text: do nothing (keeps current shape). If you prefer unknown => blob, change this:
-      // setTargetPoints("blob", makeBlobBasePoints(POINTS));
-    }
-  }
-
-  // Enter applies; clearing input switches to blob instantly
-  cmdInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") handleCommand(cmdInput.value);
-  });
-  cmdInput.addEventListener("input", () => {
-    if (cmdInput.value.trim() === "") handleCommand("");
-  });
-
-  // ========= Animation =========
-  function restartLoop() {
-    if (rafId) cancelAnimationFrame(rafId);
-    last = performance.now();
-    rafId = requestAnimationFrame(tick);
-  }
-
-  function tick(now) {
-    const dt = (now - last) / 1000;
-    last = now;
-    time += dt;
-
-    // Morph current -> target
-    const alpha = 1 - Math.exp(-morphSpeed * dt);
-    let maxDelta = 0;
-
-    for (let i=0; i<POINTS; i++) {
-      const a = currentPts[i], b = targetPts[i];
-      const nx = lerp(a.x, b.x, alpha);
-      const ny = lerp(a.y, b.y, alpha);
-      maxDelta = Math.max(maxDelta, Math.hypot(nx - a.x, ny - a.y));
-      a.x = nx; a.y = ny;
-    }
-
-    // Render: wobble only in blob mode
-    let renderPts;
-    if (mode === "blob") {
-      renderPts = currentPts.map((p,i) => {
-        const th = Math.atan2(p.y, p.x);
-        const r  = Math.hypot(p.x, p.y);
-        const w =
-          1 +
-          wobbleAmp * Math.sin(time * (wobbleSpeed * 2.0) + phase[i]) +
-          (wobbleAmp * 0.55) * Math.sin(time * (wobbleSpeed * 3.1) + phase[i] * 0.7);
-        return { x: (r*w) * Math.cos(th), y: (r*w) * Math.sin(th) };
-      });
-    } else {
-      renderPts = currentPts; // exact still
-    }
-
-    const d = pointsToClosedPath(renderPts);
-    pathEl.setAttribute("d", d);
-
-    // Freeze when settled in shape mode
-    if (mode === "shape" && maxDelta < 0.02) {
-      frozenD = pointsToClosedPath(currentPts);
-      pathEl.setAttribute("d", frozenD);
-      rafId = null;
-      return;
-    }
-
-    rafId = requestAnimationFrame(tick);
-  }
-
-  // ========= Export / Copy =========
-  function getExportD() {
-    return frozenD || pathEl.getAttribute("d") || "";
-  }
-
-  function exportSVGString() {
-    const vb = svgRoot.getAttribute("viewBox") || "-220 -220 440 440";
-    const fill = pathEl.getAttribute("fill") || "#ffffff";
-    const d = getExportD();
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">\n  <path d="${d}" fill="${fill}"/>\n</svg>\n`;
-  }
-
-  function downloadText(filename, text) {
-    const blob = new Blob([text], {type: "image/svg+xml;charset=utf-8"});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }
-
-  exportBtn.addEventListener("click", () => {
-    const name = (activeLabel && activeLabel !== "blob") ? activeLabel : "shape";
-    downloadText(`${name}.svg`, exportSVGString());
-  });
-
-  copyBtn.addEventListener("click", async () => {
-    const txt = exportSVGString();
-    try {
-      await navigator.clipboard.writeText(txt);
-      copyBtn.textContent = "Copied";
-      setTimeout(() => (copyBtn.textContent = "Copy"), 900);
-    } catch {
-      window.prompt("Copy SVG:", txt);
-    }
-  });
-
-  // ========= Info modal =========
-  function openInfo(){ modal.classList.add("open"); }
-  function closeInfoFn(){ modal.classList.remove("open"); }
-  infoBtn.addEventListener("click", openInfo);
-  closeInfo.addEventListener("click", closeInfoFn);
-  modal.addEventListener("click", (e) => { if (e.target === modal) closeInfoFn(); });
-  window.addEventListener("keydown", (e) => { if (e.key === "Escape") closeInfoFn(); });
-
-  // ========= Boot =========
-  setColor("#ffffff");
-  setTargetPoints("blob", makeBlobBasePoints(POINTS));
-  restartLoop();
+/* ---------- boot ---------- */
+start();
 })();
 </script>
 </body>
