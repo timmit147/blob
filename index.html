@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Blob → Shape</title>
+<title>Blob → Shape (Smooth + Random + Edit)</title>
 
 <style>
 :root{
@@ -27,7 +27,10 @@ body{
   inset:0;
   display:grid;
   place-items:center;
-  pointer-events:none;
+  pointer-events:none; /* normally no interaction */
+}
+body.editing .stage{
+  pointer-events:auto; /* enable dragging in edit mode */
 }
 svg{
   width:min(520px,86vw);
@@ -60,11 +63,9 @@ svg{
   transition: transform 1800ms cubic-bezier(.2,.9,.2,1);
   transform-origin: 0px 0px;
 }
-svg path{
-  transition: fill 600ms ease;
-}
+svg path{ transition: fill 600ms ease; }
 
-/* info button (requested: light gray bg, black icon) */
+/* info button: light gray bg, black icon */
 .infoBtn{
   position:fixed;
   top:14px;
@@ -79,7 +80,7 @@ svg path{
   place-items:center;
   cursor:pointer;
   pointer-events:auto;
-  font-weight:700;
+  font-weight:800;
 }
 .infoBtn:hover{background:#e6e6e6}
 
@@ -95,7 +96,7 @@ svg path{
 }
 .modal.open{display:flex}
 .card{
-  width:min(780px,92vw);
+  width:min(820px,92vw);
   background:rgba(10,14,25,.95);
   border:1px solid var(--ui-b);
   border-radius:16px;
@@ -147,6 +148,27 @@ code{
   cursor:pointer;
 }
 .btn:hover{background:rgba(255,255,255,.12)}
+
+/* Edit handles */
+#editLayer{ display:none; }
+body.editing #editLayer{ display:block; }
+
+.handle{
+  cursor:grab;
+  pointer-events:auto;
+}
+body.editing .handle:active{ cursor:grabbing; }
+.handleOutline{
+  fill:rgba(0,0,0,.25);
+}
+.handleCore{
+  fill:rgba(255,255,255,.95);
+}
+.handleRing{
+  fill:none;
+  stroke:rgba(255,255,255,.35);
+  stroke-width:1.5;
+}
 </style>
 </head>
 
@@ -157,12 +179,13 @@ code{
 <div class="stage">
   <svg id="svgRoot" viewBox="-220 -220 440 440" xmlns="http://www.w3.org/2000/svg">
     <g id="shapeGroup"></g>
+    <g id="editLayer"></g>
     <path id="helperPath" fill="none" stroke="none" visibility="hidden"/>
   </svg>
 </div>
 
 <div class="bottom">
-  <input id="cmd" placeholder="type shape name" autocomplete="off" spellcheck="false"/>
+  <input id="cmd" placeholder="type shape name or command (random, edit, copy, export, rotate 90, red...)" autocomplete="off" spellcheck="false"/>
 </div>
 
 <div class="modal" id="modal" role="dialog" aria-modal="true">
@@ -177,13 +200,16 @@ code{
       <div class="box">
         <h4>Commands (press Enter)</h4>
         <ul class="list">
+          <li><code>random</code> — choose a random shape (never repeats current)</li>
+          <li><code>edit</code> — toggle edit mode (drag points to make your own shape)</li>
           <li><code>copy</code> — copy current SVG</li>
           <li><code>export</code> — download SVG</li>
-          <li><code>random</code> — choose a random shape</li>
-          <li><code>rotate 180</code> — rotate relative (slow & smooth)</li>
-          <li><code>rotate -180</code> — rotate back</li>
+          <li><code>rotate 180</code> — rotate relative (smooth)</li>
           <li><code>red</code> / <code>#86c5e4</code> / <code>rgb(10,20,30)</code> — change color</li>
         </ul>
+        <p style="margin:10px 0 0;color:var(--muted);font-size:13px">
+          Note: command text stays in the input so you can hit Enter again.
+        </p>
       </div>
 
       <div class="box">
@@ -215,16 +241,25 @@ code{
     "capsule","drop","trapezoid","parallelogram","settings","notification"
   ];
 
-  // More points => smoother blob & smoother morph
-  const POINTS = 320;          // smoother than 200
+  // Smoothing fidelity
+  const POINTS = 360;       // dense sampling for clean curves
   const BASE_R = 140;
 
-  // Transition speed controls (requested: smooth + slow)
-  const MORPH_MS_SHAPE = 2200; // shape-to-shape and blob->shape
-  const MORPH_MS_BLOB  = 2400; // shape->blob and blob reset
+  // Morph timing (slow & smooth)
+  const MORPH_MS_SHAPE = 2400;
+  const MORPH_MS_BLOB  = 2600;
   const ROTATE_MS = 1800;
 
+  // Blob “totally different” animation:
+  // We animate a small set of control radii with a smooth random-walk, then spline it.
+  const BLOB_CTRL = 20;
+
+  // Edit mode: draggable control points
+  const EDIT_CTRL = 24;     // manageable number of handles
+
+  const svgRoot = document.getElementById("svgRoot");
   const group  = document.getElementById("shapeGroup");
+  const editLayer = document.getElementById("editLayer");
   const helper = document.getElementById("helperPath");
   const cmd    = document.getElementById("cmd");
 
@@ -233,7 +268,6 @@ code{
   const closeBtn = document.getElementById("closeBtn");
   const shapeListEl = document.getElementById("shapeList");
 
-  // Render list
   SHAPES.forEach(s => {
     const li = document.createElement("li");
     li.textContent = s;
@@ -243,121 +277,30 @@ code{
   let fillColor = "#ffffff";
   let rotationDeg = 0;
 
-  let mode = "blob";          // blob | shape
-  let multiShape = false;     // multi-path => poly rendering to prevent bridging
-  let raf = null, time = 0;
+  // Current “state label” so random never repeats
+  let currentShapeName = ""; // "" = blob, otherwise shape name or "custom"
 
-  // ----- Morph tween state (smooth & slow, fixes fast star->pause) -----
+  let mode = "blob";          // blob | shape
+  let multiShape = false;
+  let raf = null;
+
+  // ----- morph tween state -----
   let morphing = false;
   let morphStart = 0;
   let morphDur = MORPH_MS_SHAPE;
   let fromSets = null;
   let toSets = null;
-  let currentSets = [makeBlobPoints()];
+
+  // currentSets always holds the geometry we render (even in blob)
+  let currentSets = [makeCirclePoints(BASE_R)];
 
   function easeInOutCubic(t){
     return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2;
   }
 
-  // phase offsets for blob wobble (stable per vertex)
-  const blobPhase = Array.from({length: POINTS}, (_, i) => {
-    const th = (i / POINTS) * TAU;
-    return 2.6*Math.sin(th*2.0 + 0.9) + 1.8*Math.sin(th*1.1 - 0.4);
-  });
-
-  // ====== Smoothing helpers ======
-  function smoothArray(arr, passes=4){
-    const n = arr.length;
-    let a = arr.slice();
-    for(let p=0;p<passes;p++){
-      const b = new Array(n);
-      for(let i=0;i<n;i++){
-        const prev = a[(i-1+n)%n];
-        const cur  = a[i];
-        const next = a[(i+1)%n];
-        b[i] = (prev + 2*cur + next) / 4;
-      }
-      a = b;
-    }
-    return a;
-  }
-
-  function smoothPoints(pts, passes=1){
-    const n = pts.length;
-    let a = pts.map(p => ({x:p.x,y:p.y}));
-    for(let p=0;p<passes;p++){
-      const b = new Array(n);
-      for(let i=0;i<n;i++){
-        const prev = a[(i-1+n)%n];
-        const cur  = a[i];
-        const next = a[(i+1)%n];
-        b[i] = {
-          x:(prev.x + 2*cur.x + next.x)/4,
-          y:(prev.y + 2*cur.y + next.y)/4
-        };
-      }
-      a = b;
-    }
-    return a;
-  }
-
-  // ====== Blob generation (rounder + evenly smooth everywhere) ======
-  function makeBlobPoints(){
-    const radii = [];
-    for(let i=0;i<POINTS;i++){
-      const th=(i/POINTS)*TAU;
-
-      // rounder + fewer harsh frequencies
-      const base =
-        1
-        + 0.05*Math.sin(th*2 + 0.6)
-        + 0.03*Math.sin(th*3 - 1.1)
-        + 0.015*Math.sin(th*5 + 2.0);
-
-      radii.push(BASE_R * base);
-    }
-
-    // stronger smoothing to remove any “one-side kink”
-    const smoothR = smoothArray(radii, 6);
-
-    const pts=[];
-    for(let i=0;i<POINTS;i++){
-      const th=(i/POINTS)*TAU;
-      const r = smoothR[i];
-      pts.push({x:r*Math.cos(th), y:r*Math.sin(th)});
-    }
-    return pts;
-  }
-
-  // ====== Path builders (higher precision => smoother) ======
+  // ====== Utilities ======
   const fmt = (n)=>Number(n).toFixed(3);
 
-  function toSmoothPath(pts){
-    const n = pts.length;
-    const p = (i)=>pts[(i+n)%n];
-    let d="";
-    for(let i=0;i<n;i++){
-      const p0=p(i-1), p1=p(i), p2=p(i+1), p3=p(i+2);
-      const c1x = p1.x + (p2.x - p0.x)/6;
-      const c1y = p1.y + (p2.y - p0.y)/6;
-      const c2x = p2.x - (p3.x - p1.x)/6;
-      const c2y = p2.y - (p3.y - p1.y)/6;
-      if(i===0) d += `M ${fmt(p1.x)} ${fmt(p1.y)} `;
-      d += `C ${fmt(c1x)} ${fmt(c1y)}, ${fmt(c2x)} ${fmt(c2y)}, ${fmt(p2.x)} ${fmt(p2.y)} `;
-    }
-    return d + "Z";
-  }
-
-  // For multi-part shapes: no bulging, no connecting
-  function toPolyPath(pts){
-    let d = `M ${fmt(pts[0].x)} ${fmt(pts[0].y)} `;
-    for(let i=1;i<pts.length;i++){
-      d += `L ${fmt(pts[i].x)} ${fmt(pts[i].y)} `;
-    }
-    return d + "Z";
-  }
-
-  // ====== Stabilize size/center ======
   function stabilizeSizeAndCenter(sets){
     let cx=0, cy=0, count=0;
     for(const pts of sets){
@@ -385,10 +328,88 @@ code{
     return {x:cx/pts.length, y:cy/pts.length};
   }
 
-  // ====== Alignment fix (reduce twisting) ======
+  function deepCopySets(sets){
+    return sets.map(pts => pts.map(p => ({x:p.x,y:p.y})));
+  }
+
+  function makeCirclePoints(r){
+    const pts=[];
+    for(let i=0;i<POINTS;i++){
+      const th = (i/POINTS)*TAU;
+      pts.push({x:r*Math.cos(th), y:r*Math.sin(th)});
+    }
+    return pts;
+  }
+
+  // ====== Catmull-Rom spline sampling (closed) for smooth curves ======
+  function catmullRomClosed(ctrlPts, samples){
+    const n = ctrlPts.length;
+    const out = new Array(samples);
+
+    const get = (i)=>ctrlPts[(i % n + n) % n];
+
+    for(let s=0;s<samples;s++){
+      const t = (s / samples) * n;
+      const i = Math.floor(t);
+      const u = t - i;
+
+      const p0 = get(i-1);
+      const p1 = get(i);
+      const p2 = get(i+1);
+      const p3 = get(i+2);
+
+      const u2 = u*u;
+      const u3 = u2*u;
+
+      // Catmull-Rom (uniform)
+      const x = 0.5 * (
+        (2*p1.x) +
+        (-p0.x + p2.x)*u +
+        (2*p0.x - 5*p1.x + 4*p2.x - p3.x)*u2 +
+        (-p0.x + 3*p1.x - 3*p2.x + p3.x)*u3
+      );
+      const y = 0.5 * (
+        (2*p1.y) +
+        (-p0.y + p2.y)*u +
+        (2*p0.y - 5*p1.y + 4*p2.y - p3.y)*u2 +
+        (-p0.y + 3*p1.y - 3*p2.y + p3.y)*u3
+      );
+
+      out[s] = {x,y};
+    }
+    return out;
+  }
+
+  // ====== Path builders ======
+  function toSmoothPath(pts){
+    // Use cubic smoothing on already-smooth points => very pleasing
+    const n = pts.length;
+    const p = (i)=>pts[(i+n)%n];
+    let d="";
+    for(let i=0;i<n;i++){
+      const p0=p(i-1), p1=p(i), p2=p(i+1), p3=p(i+2);
+      const c1x = p1.x + (p2.x - p0.x)/6;
+      const c1y = p1.y + (p2.y - p0.y)/6;
+      const c2x = p2.x - (p3.x - p1.x)/6;
+      const c2y = p2.y - (p3.y - p1.y)/6;
+      if(i===0) d += `M ${fmt(p1.x)} ${fmt(p1.y)} `;
+      d += `C ${fmt(c1x)} ${fmt(c1y)}, ${fmt(c2x)} ${fmt(c2y)}, ${fmt(p2.x)} ${fmt(p2.y)} `;
+    }
+    return d + "Z";
+  }
+
+  function toPolyPath(pts){
+    let d = `M ${fmt(pts[0].x)} ${fmt(pts[0].y)} `;
+    for(let i=1;i<pts.length;i++){
+      d += `L ${fmt(pts[i].x)} ${fmt(pts[i].y)} `;
+    }
+    return d + "Z";
+  }
+
+  // ====== Alignment fix (reduces twisting) ======
   function alignTargetToCurrent(currentPts, targetPts){
     const n = currentPts.length;
-    const step = 6;
+    const step = 8;
     function scoreFor(shift, reversed){
       let sum = 0;
       for(let i=0;i<n;i+=step){
@@ -400,7 +421,7 @@ code{
       return sum;
     }
 
-    const coarseStep = 12;
+    const coarseStep = 16;
     let bestShift = 0, bestRev = false, bestScore = Infinity;
 
     for(let sh=0; sh<n; sh+=coarseStep){
@@ -434,7 +455,7 @@ code{
     return out;
   }
 
-  // ====== Sampling SVG paths ======
+  // ====== SVG sampling ======
   function pointsFromPathD(d){
     helper.setAttribute("d", d);
     const L = helper.getTotalLength();
@@ -490,29 +511,88 @@ code{
     group.setAttribute("transform", `rotate(${rotationDeg})`);
   }
 
-  // ====== Animation loop ======
+  // ====== Blob animation (NEW): smooth random-walk control radii ======
+  const blobCtrl = Array.from({length:BLOB_CTRL}, (_,i)=>({
+    r: 1.0,
+    v: 0.0,
+    seed: (i+1)*999.123
+  }));
+
+  function rand01(x){
+    // deterministic-ish hash noise for stability
+    const s = Math.sin(x) * 43758.5453123;
+    return s - Math.floor(s);
+  }
+
+  function updateBlob(dt, t){
+    // Smooth random walk on each control radius
+    // (very gentle acceleration toward a moving target)
+    for(let i=0;i<BLOB_CTRL;i++){
+      const c = blobCtrl[i];
+
+      // slow target drift (0.92..1.08)
+      const target =
+        1.0
+        + 0.08*Math.sin(t*0.55 + i*0.9)
+        + 0.04*Math.sin(t*0.23 + i*1.7);
+
+      // small noise push
+      const n = (rand01(c.seed + t*0.35) - 0.5) * 0.18;
+
+      // physics-y smoothing
+      const k = 2.8;      // stiffness
+      const damp = 2.2;   // damping
+
+      const a = k*(target + n - c.r) - damp*c.v;
+      c.v += a * dt;
+      c.r += c.v * dt;
+    }
+  }
+
+  function blobPointsFromCtrl(){
+    // Build control points in XY around a circle using the control radii,
+    // then spline to POINTS for ultra-smooth blob
+    const ctrlPts = new Array(BLOB_CTRL);
+    for(let i=0;i<BLOB_CTRL;i++){
+      const th = (i/BLOB_CTRL)*TAU;
+      const r = BASE_R * blobCtrl[i].r;
+      ctrlPts[i] = {x:r*Math.cos(th), y:r*Math.sin(th)};
+    }
+    const pts = catmullRomClosed(ctrlPts, POINTS);
+    stabilizeSizeAndCenter([pts]);
+    return pts;
+  }
+
+  // ====== Morph / render loop ======
   function start(){
     if(raf) cancelAnimationFrame(raf);
     raf = requestAnimationFrame(tick);
   }
 
-  function tick(now){
-    // blob needs to keep animating for wobble even when not morphing
-    time = now / 1000;
+  let lastNow = performance.now();
 
-    // ----- morph tween -----
+  function tick(now){
+    const dt = Math.min(0.033, (now - lastNow)/1000);
+    lastNow = now;
+    const t = now/1000;
+
+    if(mode === "blob" && !morphing){
+      updateBlob(dt, t);
+      currentSets = [blobPointsFromCtrl()];
+      render();
+      raf = requestAnimationFrame(tick);
+      return;
+    }
+
     if(morphing){
-      const t = Math.min(1, (now - morphStart) / morphDur);
-      const e = easeInOutCubic(t);
+      const tt = Math.min(1, (now - morphStart) / morphDur);
+      const e = easeInOutCubic(tt);
 
       const interp = fromSets.map((a, si) => {
         const b = toSets[si];
         const out = new Array(POINTS);
         for(let i=0;i<POINTS;i++){
-          out[i] = {
-            x: lerp(a[i].x, b[i].x, e),
-            y: lerp(a[i].y, b[i].y, e),
-          };
+          out[i] = { x: lerp(a[i].x, b[i].x, e), y: lerp(a[i].y, b[i].y, e) };
         }
         return out;
       });
@@ -520,15 +600,13 @@ code{
       stabilizeSizeAndCenter(interp);
       currentSets = interp;
 
-      if(t >= 1){
+      if(tt >= 1){
         morphing = false;
-        // lock exact targets when done
-        currentSets = toSets.map(pts => pts.map(p => ({x:p.x,y:p.y})));
+        currentSets = deepCopySets(toSets);
 
-        // if we're in "shape" mode, we can stop animating (no wobble needed)
-        // but if blob mode, keep running for wobble
-        if(mode === "shape"){
-          render(); // final render
+        // if in shape mode, we can stop animating unless in edit mode
+        if(mode === "shape" && !isEditing){
+          render();
           raf = null;
           return;
         }
@@ -541,36 +619,59 @@ code{
 
   function render(){
     ensurePathEls(currentSets.length);
-
     for(let s=0; s<currentSets.length; s++){
-      let renderPts = currentSets[s];
-
-      if(mode === "blob"){
-        const breathe = 1 + 0.018*Math.sin(time*0.9);
-
-        const wob = renderPts.map((p,i)=>{
-          const r = Math.hypot(p.x,p.y);
-          const th = Math.atan2(p.y,p.x);
-
-          const wobble =
-            1
-            + 0.040*Math.sin(time*1.5 + blobPhase[i] + s*0.5)
-            + 0.018*Math.sin(time*2.1 + blobPhase[i]*0.7 + s*0.3);
-
-          const rr = r * wobble * breathe;
-          return { x: rr*Math.cos(th), y: rr*Math.sin(th) };
-        });
-
-        // extra smoothing pass => removes any “right-side” kink during wobble
-        renderPts = smoothPoints(wob, 1);
-      }
-
-      const d = (multiShape ? toPolyPath(renderPts) : toSmoothPath(renderPts));
+      const pts = currentSets[s];
+      const d = (multiShape ? toPolyPath(pts) : toSmoothPath(pts));
       group.children[s].setAttribute("d", d);
+    }
+    if(isEditing){
+      updateEditHandles();
     }
   }
 
-  // ====== Hybrid shape loader ======
+  function beginMorph(nextSets, durationMs){
+    if(currentSets.length !== nextSets.length){
+      currentSets = spawnFromTargets(nextSets);
+    }
+
+    const aligned = nextSets.map((pts, idx) => {
+      const cur = currentSets[idx];
+      const t = pts.map(p => ({x:p.x, y:p.y}));
+      return alignTargetToCurrent(cur, t);
+    });
+
+    stabilizeSizeAndCenter(currentSets);
+    stabilizeSizeAndCenter(aligned);
+
+    fromSets = deepCopySets(currentSets);
+    toSets = deepCopySets(aligned);
+    morphStart = performance.now();
+    morphDur = durationMs;
+    morphing = true;
+
+    start();
+  }
+
+  // Spawn blobs/circles to match multi-path count
+  function spawnFromTargets(targetSetsIn){
+    const spawned = targetSetsIn.map((tset)=>{
+      // use current blob snapshot as base if in blob mode, otherwise circle
+      const base = (mode === "blob") ? blobPointsFromCtrl() : makeCirclePoints(BASE_R);
+      const b = base.map(p => ({x:p.x,y:p.y}));
+
+      const ct = centroid(tset);
+      const cb = centroid(b);
+      for(const p of b){
+        p.x = (p.x - cb.x) + ct.x;
+        p.y = (p.y - cb.y) + ct.y;
+      }
+      return b;
+    });
+    stabilizeSizeAndCenter(spawned);
+    return spawned;
+  }
+
+  // ====== Shape loader ======
   const cache = {};
   async function loadShapeByName(name){
     const file = name.toLowerCase().trim().replace(/\s+/g,"-") + ".svg";
@@ -598,51 +699,6 @@ code{
     } catch {
       return null;
     }
-  }
-
-  // Spawn blobs to match multi-path count
-  function spawnFromTargets(targetSetsIn){
-    const spawned = targetSetsIn.map((tset)=>{
-      const b = makeBlobPoints();
-      const ct = centroid(tset);
-      const cb = centroid(b);
-      for(const p of b){
-        p.x = (p.x - cb.x) + ct.x;
-        p.y = (p.y - cb.y) + ct.y;
-      }
-      return b;
-    });
-    stabilizeSizeAndCenter(spawned);
-    return spawned;
-  }
-
-  function deepCopySets(sets){
-    return sets.map(pts => pts.map(p => ({x:p.x,y:p.y})));
-  }
-
-  function beginMorph(nextSets, durationMs){
-    // normalize counts
-    if(currentSets.length !== nextSets.length){
-      currentSets = spawnFromTargets(nextSets);
-    }
-
-    // align each target path to its current path (reduces twist)
-    const aligned = nextSets.map((pts, idx) => {
-      const cur = currentSets[idx];
-      const t = pts.map(p => ({x:p.x, y:p.y}));
-      return alignTargetToCurrent(cur, t);
-    });
-
-    stabilizeSizeAndCenter(currentSets);
-    stabilizeSizeAndCenter(aligned);
-
-    fromSets = deepCopySets(currentSets);
-    toSets = deepCopySets(aligned);
-    morphStart = performance.now();
-    morphDur = durationMs;
-    morphing = true;
-
-    start();
   }
 
   // ====== Commands ======
@@ -687,23 +743,35 @@ ${paths}
     const v = name.trim();
     if(!v){
       // return to blob mode
+      exitEditMode();              // leaving edit if active
       mode = "blob";
       multiShape = false;
-      beginMorph([makeBlobPoints()], MORPH_MS_BLOB);
+      currentShapeName = "";
+      morphing = false;            // blob is procedural; no need to tween
+      start();
       return;
     }
 
     const sets = await loadShapeByName(v);
     if(!sets) return;
 
+    exitEditMode();
     mode = "shape";
     multiShape = (sets.length > 1);
+    currentShapeName = v.toLowerCase();
 
     beginMorph(sets, MORPH_MS_SHAPE);
   }
 
-  function chooseRandomShape(){
-    const pick = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+  function chooseRandomShapeNotCurrent(){
+    if(SHAPES.length <= 1) return SHAPES[0] || "";
+    const cur = currentShapeName; // may be "" or "custom"
+    let pick = "";
+    let tries = 0;
+    do{
+      pick = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+      tries++;
+    }while(pick.toLowerCase() === cur && tries < 50);
     return pick;
   }
 
@@ -720,20 +788,22 @@ ${paths}
 
     if(lower === "copy"){
       doCopy();
-      cmd.value = "";
-      return;
+      return; // keep text in input
     }
 
     if(lower === "export"){
       doExport();
-      cmd.value = "";
       return;
     }
 
     if(lower === "random"){
-      const pick = chooseRandomShape();
-      cmd.value = ""; // keep clean
-      await applyShape(pick);
+      const pick = chooseRandomShapeNotCurrent();
+      if(pick) await applyShape(pick);
+      return;
+    }
+
+    if(lower === "edit"){
+      toggleEditMode();
       return;
     }
 
@@ -741,17 +811,16 @@ ${paths}
       const n = parseFloat(raw.slice(7).trim());
       if(Number.isFinite(n)){
         setRotation(rotationDeg + n);
-        cmd.value = "";
       }
       return;
     }
 
     if(isCssColor(raw)){
       setFill(raw);
-      cmd.value = "";
       return;
     }
 
+    // otherwise shape name
     await applyShape(raw);
   });
 
@@ -768,13 +837,169 @@ ${paths}
   modal.addEventListener("click", (e) => { if(e.target === modal) modal.classList.remove("open"); });
   window.addEventListener("keydown", (e) => { if(e.key === "Escape") modal.classList.remove("open"); });
 
+  // =========================
+  // EDIT MODE (drag points)
+  // =========================
+  let isEditing = false;
+  let editCtrlPts = null; // array of {x,y}
+  let draggingIndex = -1;
+
+  function svgPointFromClient(clientX, clientY){
+    const pt = svgRoot.createSVGPoint();
+    pt.x = clientX; pt.y = clientY;
+    const ctm = svgRoot.getScreenCTM();
+    if(!ctm) return {x:0,y:0};
+    const inv = ctm.inverse();
+    const p = pt.matrixTransform(inv);
+    return {x:p.x, y:p.y};
+  }
+
+  function getSingleSetForEdit(){
+    // If multiple paths, just edit the first (simple + predictable).
+    // If you want multi-path editing later, we can extend it.
+    return currentSets[0].map(p => ({x:p.x,y:p.y}));
+  }
+
+  function initEditFromCurrent(){
+    const pts = getSingleSetForEdit();
+    // sample EDIT_CTRL points evenly from current shape points
+    editCtrlPts = [];
+    for(let i=0;i<EDIT_CTRL;i++){
+      const idx = Math.floor((i/EDIT_CTRL) * pts.length);
+      editCtrlPts.push({x:pts[idx].x, y:pts[idx].y});
+    }
+    stabilizeSizeAndCenter([editCtrlPts]);
+  }
+
+  function rebuildFromEditCtrl(){
+    // Make a smooth custom shape from handles
+    const dense = catmullRomClosed(editCtrlPts, POINTS);
+    stabilizeSizeAndCenter([dense]);
+    currentSets = [dense];
+    mode = "shape";
+    multiShape = false;
+    currentShapeName = "custom";
+    morphing = false;
+    start();
+  }
+
+  function clearEditLayer(){
+    while(editLayer.firstChild) editLayer.removeChild(editLayer.firstChild);
+  }
+
+  function buildEditHandles(){
+    clearEditLayer();
+    for(let i=0;i<EDIT_CTRL;i++){
+      const g = document.createElementNS("http://www.w3.org/2000/svg","g");
+      g.setAttribute("class","handle");
+      g.dataset.index = String(i);
+
+      // outline shadow
+      const o = document.createElementNS("http://www.w3.org/2000/svg","circle");
+      o.setAttribute("r","8.5");
+      o.setAttribute("class","handleOutline");
+      g.appendChild(o);
+
+      // core
+      const c = document.createElementNS("http://www.w3.org/2000/svg","circle");
+      c.setAttribute("r","6");
+      c.setAttribute("class","handleCore");
+      g.appendChild(c);
+
+      // ring
+      const r = document.createElementNS("http://www.w3.org/2000/svg","circle");
+      r.setAttribute("r","10.5");
+      r.setAttribute("class","handleRing");
+      g.appendChild(r);
+
+      editLayer.appendChild(g);
+    }
+    updateEditHandles();
+  }
+
+  function updateEditHandles(){
+    if(!isEditing || !editCtrlPts) return;
+    const nodes = [...editLayer.children];
+    for(let i=0;i<nodes.length;i++){
+      const p = editCtrlPts[i];
+      nodes[i].setAttribute("transform", `translate(${fmt(p.x)} ${fmt(p.y)})`);
+    }
+  }
+
+  function onPointerDown(e){
+    const target = e.target.closest?.(".handle");
+    if(!target) return;
+    draggingIndex = Number(target.dataset.index);
+    target.setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+  }
+
+  function onPointerMove(e){
+    if(!isEditing || draggingIndex < 0) return;
+    const p = svgPointFromClient(e.clientX, e.clientY);
+    editCtrlPts[draggingIndex].x = p.x;
+    editCtrlPts[draggingIndex].y = p.y;
+    rebuildFromEditCtrl();
+    e.preventDefault();
+  }
+
+  function onPointerUp(e){
+    draggingIndex = -1;
+  }
+
+  function enterEditMode(){
+    if(isEditing) return;
+    isEditing = true;
+    document.body.classList.add("editing");
+
+    // If we're currently in blob mode, freeze a snapshot first
+    if(mode === "blob"){
+      currentSets = [blobPointsFromCtrl()];
+      mode = "shape";
+      multiShape = false;
+      currentShapeName = "custom";
+      morphing = false;
+    }
+
+    initEditFromCurrent();
+    buildEditHandles();
+
+    // pointer events
+    svgRoot.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove, {passive:false});
+    window.addEventListener("pointerup", onPointerUp);
+    start();
+  }
+
+  function exitEditMode(){
+    if(!isEditing) return;
+    isEditing = false;
+    document.body.classList.remove("editing");
+    draggingIndex = -1;
+
+    svgRoot.removeEventListener("pointerdown", onPointerDown);
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+
+    clearEditLayer();
+    // keep the custom shape as-is
+    if(mode === "shape"){
+      // stop animating once settled
+      raf && cancelAnimationFrame(raf);
+      raf = null;
+    }
+  }
+
+  function toggleEditMode(){
+    if(isEditing) exitEditMode();
+    else enterEditMode();
+  }
+
   // ====== Boot ======
   setFill("#ffffff");
   setRotation(0);
-
-  // start blob wobble immediately
-  currentSets = [makeBlobPoints()];
-  stabilizeSizeAndCenter(currentSets);
+  currentShapeName = ""; // blob
+  mode = "blob";
   start();
 })();
 </script>
