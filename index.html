@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Alive Blob (SVG Morph)</title>
+  <style>
+    :root { --bg:#0b0f19; --fg:#e9eefc; --muted:#9aa6c3; }
+    html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body {
+      display:flex; align-items:center; justify-content:center;
+      background: radial-gradient(1200px 700px at 50% 40%, #151d33 0%, var(--bg) 60%, #070a12 100%);
+      color: var(--fg);
+    }
+    .wrap { width:min(680px, 92vw); text-align:center; }
+    .stage {
+      width:min(420px, 78vw); aspect-ratio:1/1; margin:0 auto 18px;
+      display:grid; place-items:center;
+      filter: drop-shadow(0 18px 40px rgba(0,0,0,.55));
+    }
+    svg { width:100%; height:100%; overflow:visible; }
+    .hint { color:var(--muted); font-size:14px; margin-top:8px; }
+    input {
+      width:min(520px, 92vw);
+      padding:14px 16px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.12);
+      background: rgba(255,255,255,.06);
+      color: var(--fg);
+      outline:none;
+      font-size:16px;
+    }
+    input:focus { border-color: rgba(135,177,255,.45); box-shadow: 0 0 0 4px rgba(135,177,255,.12); }
+    .chips { margin-top:10px; font-size:13px; color:var(--muted); }
+    code { background: rgba(255,255,255,.06); padding:2px 6px; border-radius:8px; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="stage">
+      <svg viewBox="-220 -220 440 440" aria-label="Morphing blob">
+        <defs>
+          <radialGradient id="g" cx="35%" cy="30%" r="80%">
+            <stop offset="0%" stop-color="#9ad1ff" stop-opacity="1"/>
+            <stop offset="55%" stop-color="#6d7dff" stop-opacity="0.95"/>
+            <stop offset="100%" stop-color="#3c2d6b" stop-opacity="0.9"/>
+          </radialGradient>
+
+          <!-- a subtle shine -->
+          <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="6" result="blur"/>
+            <feColorMatrix in="blur" type="matrix"
+              values="1 0 0 0 0
+                      0 1 0 0 0
+                      0 0 1 0 0
+                      0 0 0 .28 0" result="shadow"/>
+            <feMerge>
+              <feMergeNode in="shadow"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+        </defs>
+
+        <path id="blob" fill="url(#g)" filter="url(#soft)"></path>
+      </svg>
+    </div>
+
+    <input id="shapeInput" autocomplete="off" spellcheck="false"
+           placeholder="Type: circle, triangle, square, pentagon, hexagon, star, blob … then press Enter" />
+    <div class="chips">
+      Try: <code>circle</code> <code>triangle</code> <code>square</code> <code>pentagon</code> <code>hexagon</code> <code>star</code> <code>blob</code>
+    </div>
+    <div class="hint">The blob “breathes” continuously and morphs smoothly to your requested shape.</div>
+  </div>
+
+<script>
+(() => {
+  // ====== Helpers ======
+  const TAU = Math.PI * 2;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp  = (a, b, t) => a + (b - a) * t;
+
+  // Catmull-Rom -> Bezier path for smooth closed curve
+  function pointsToClosedPath(pts) {
+    // pts: [{x,y}, ...] closed implicitly
+    const n = pts.length;
+    const p = (i) => pts[(i + n) % n];
+
+    let d = "";
+    for (let i = 0; i < n; i++) {
+      const p0 = p(i - 1), p1 = p(i), p2 = p(i + 1), p3 = p(i + 2);
+
+      // Catmull-Rom to cubic Bezier control points
+      const c1x = p1.x + (p2.x - p0.x) / 6;
+      const c1y = p1.y + (p2.y - p0.y) / 6;
+      const c2x = p2.x - (p3.x - p1.x) / 6;
+      const c2y = p2.y - (p3.y - p1.y) / 6;
+
+      if (i === 0) d += `M ${p1.x.toFixed(2)} ${p1.y.toFixed(2)} `;
+      d += `C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)} `;
+    }
+    d += "Z";
+    return d;
+  }
+
+  // Regular n-gon radius function in polar coordinates
+  // r(theta) for a unit circumradius polygon (scaled later)
+  function ngonRadius(theta, n) {
+    const a = TAU / n;
+    const t = ((theta % a) + a) % a;     // 0..a
+    const k = Math.cos(Math.PI / n) / Math.cos(t - a/2);
+    return k; // >= cos(pi/n)
+  }
+
+  function makeBaseRadii(kind, count) {
+    // Returns array of base radii multipliers (around ~1)
+    const radii = new Array(count).fill(1);
+
+    if (kind === "circle") {
+      return radii.map(() => 1);
+    }
+
+    if (kind === "triangle") {
+      for (let i=0; i<count; i++) {
+        const th = (i / count) * TAU;
+        radii[i] = ngonRadius(th, 3);
+      }
+      // normalize so average ~1
+      return normalize(radii);
+    }
+
+    if (kind === "square") {
+      for (let i=0; i<count; i++) {
+        const th = (i / count) * TAU;
+        radii[i] = ngonRadius(th, 4);
+      }
+      return normalize(radii);
+    }
+
+    if (kind === "pentagon") {
+      for (let i=0; i<count; i++) radii[i] = ngonRadius((i/count)*TAU, 5);
+      return normalize(radii);
+    }
+
+    if (kind === "hexagon") {
+      for (let i=0; i<count; i++) radii[i] = ngonRadius((i/count)*TAU, 6);
+      return normalize(radii);
+    }
+
+    if (kind === "star") {
+      // simple star: alternate inner/outer via cosine spikes
+      for (let i=0; i<count; i++) {
+        const th = (i / count) * TAU;
+        // 5-point star-ish
+        const spikes = 5;
+        const s = (Math.cos(th * spikes) + 1) / 2; // 0..1
+        radii[i] = lerp(0.62, 1.18, s);
+      }
+      return normalize(radii);
+    }
+
+    // "blob" default: smooth random-ish radii
+    // fixed seed-ish pattern using sines
+    for (let i=0; i<count; i++) {
+      const th = (i / count) * TAU;
+      const v =
+        1 +
+        0.16 * Math.sin(th * 2 + 0.8) +
+        0.10 * Math.sin(th * 3 - 1.4) +
+        0.07 * Math.sin(th * 5 + 2.2);
+      radii[i] = v;
+    }
+    return normalize(radii);
+  }
+
+  function normalize(arr) {
+    const avg = arr.reduce((s,v)=>s+v,0) / arr.length;
+    return arr.map(v => v / avg);
+  }
+
+  // ====== Scene setup ======
+  const pathEl = document.getElementById("blob");
+  const input  = document.getElementById("shapeInput");
+
+  const POINTS = 72;         // more points = smoother
+  const BASE_R = 140;        // overall size
+  const wobble = {
+    amp: 0.08,               // how alive it feels (0..)
+    speed: 0.9
+  };
+
+  // Current + target radii (multipliers)
+  let current = makeBaseRadii("blob", POINTS);
+  let target  = makeBaseRadii("blob", POINTS);
+
+  // per-vertex phase for "alive" wobble (deterministic)
+  const phase = Array.from({length: POINTS}, (_, i) => {
+    const th = (i / POINTS) * TAU;
+    return 3.1 * Math.sin(th * 2.7 + 1.2) + 2.0 * Math.sin(th * 1.3 - 0.5);
+  });
+
+  function setShape(nameRaw) {
+    const name = (nameRaw || "").trim().toLowerCase();
+    const known = ["circle","triangle","square","pentagon","hexagon","star","blob"];
+    const pick = known.includes(name) ? name : "blob";
+    target = makeBaseRadii(pick, POINTS);
+  }
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") setShape(input.value);
+  });
+
+  // Also morph as you type (optional, feels nice)
+  input.addEventListener("input", () => {
+    const v = input.value.trim().toLowerCase();
+    if (["circle","triangle","square","pentagon","hexagon","star","blob"].includes(v)) {
+      setShape(v);
+    }
+  });
+
+  // ====== Animation loop ======
+  let last = performance.now();
+  let t = 0;
+
+  function tick(now) {
+    const dt = (now - last) / 1000;
+    last = now;
+    t += dt;
+
+    // Smooth morph (critically damped-ish)
+    // You can tune 'morphSpeed' for faster/slower transitions.
+    const morphSpeed = 6.5;
+    const alpha = 1 - Math.exp(-morphSpeed * dt);
+
+    for (let i=0; i<POINTS; i++) {
+      current[i] = lerp(current[i], target[i], alpha);
+    }
+
+    // Build points with "alive" wobble layered on top
+    const pts = [];
+    for (let i=0; i<POINTS; i++) {
+      const th = (i / POINTS) * TAU;
+      const breathe = 1 + 0.02 * Math.sin(t * 1.3); // whole-shape breathing
+
+      // vertex wobble (smooth, organic)
+      const w =
+        1 +
+        wobble.amp * Math.sin(t * (wobble.speed * 2.0) + phase[i]) +
+        (wobble.amp * 0.55) * Math.sin(t * (wobble.speed * 3.1) + phase[i] * 0.7);
+
+      const r = BASE_R * current[i] * w * breathe;
+      pts.push({ x: r * Math.cos(th), y: r * Math.sin(th) });
+    }
+
+    pathEl.setAttribute("d", pointsToClosedPath(pts));
+    requestAnimationFrame(tick);
+  }
+
+  // Start with a gentle circle-ish blob
+  setShape("blob");
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
