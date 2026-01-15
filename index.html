@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Alive Blob → Solid Shape (Export SVG)</title>
+  <title>Alive Blob → Any Shape (SVG) + Color + Export</title>
   <style>
     :root { --bg:#0b0f19; --fg:#e9eefc; --muted:#9aa6c3; }
     html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
@@ -12,15 +12,16 @@
       background: radial-gradient(1200px 700px at 50% 40%, #151d33 0%, var(--bg) 60%, #070a12 100%);
       color: var(--fg);
     }
-    .wrap { width:min(760px, 92vw); text-align:center; }
+    .wrap { width:min(820px, 94vw); text-align:center; }
     .stage {
-      width:min(420px, 78vw); aspect-ratio:1/1; margin:0 auto 16px;
+      width:min(440px, 82vw); aspect-ratio:1/1; margin:0 auto 14px;
       display:grid; place-items:center;
       filter: drop-shadow(0 18px 40px rgba(0,0,0,.55));
     }
     svg { width:100%; height:100%; overflow:visible; }
-    input {
-      width:min(560px, 92vw);
+    .controls { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:10px; }
+    input[type="text"]{
+      width:min(620px, 94vw);
       padding:14px 16px;
       border-radius:14px;
       border:1px solid rgba(255,255,255,.12);
@@ -29,66 +30,115 @@
       outline:none;
       font-size:16px;
     }
-    input:focus { border-color: rgba(135,177,255,.45); box-shadow: 0 0 0 4px rgba(135,177,255,.12); }
-    .row { margin-top:10px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
-    button {
+    input[type="text"]:focus{ border-color: rgba(135,177,255,.45); box-shadow:0 0 0 4px rgba(135,177,255,.12); }
+    .row { margin-top:10px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap; align-items:center; }
+    button{
       padding:10px 14px; border-radius:12px;
       border:1px solid rgba(255,255,255,.14);
       background: rgba(255,255,255,.06);
       color: var(--fg);
-      cursor:pointer;
-      font-size:14px;
+      cursor:pointer; font-size:14px;
     }
     button:hover { background: rgba(255,255,255,.10); }
-    .chips { margin-top:10px; font-size:13px; color:var(--muted); }
+    .colorWrap{
+      display:flex; align-items:center; gap:10px;
+      padding:8px 10px; border-radius:12px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.06);
+    }
+    input[type="color"]{ width:44px; height:34px; border:none; background:transparent; padding:0; cursor:pointer; }
+    .small { color:var(--muted); font-size:13px; line-height:1.4; margin-top:10px; }
     code { background: rgba(255,255,255,.06); padding:2px 6px; border-radius:8px; }
-    .hint { color:var(--muted); font-size:13px; margin-top:8px; line-height:1.35; }
+    .examples { margin-top:8px; color:var(--muted); font-size:13px; }
   </style>
 </head>
 
 <body>
   <div class="wrap">
     <div class="stage">
-      <svg id="svgRoot" viewBox="-220 -220 440 440" aria-label="Morphing blob" xmlns="http://www.w3.org/2000/svg">
+      <svg id="svgRoot" viewBox="-220 -220 440 440" xmlns="http://www.w3.org/2000/svg" aria-label="shape">
         <path id="shapePath" fill="#ffffff"></path>
+
+        <!-- hidden helper path for sampling custom SVG path input -->
+        <path id="helperPath" fill="none" stroke="none" d="" style="visibility:hidden;"></path>
       </svg>
     </div>
 
-    <input id="shapeInput" autocomplete="off" spellcheck="false"
-           placeholder="Type: circle, triangle, square, pentagon, hexagon, star, blob … then press Enter" />
+    <input id="cmd" type="text" autocomplete="off" spellcheck="false"
+      placeholder="Type a shape command, or paste an SVG path starting with M... then press Enter" />
 
     <div class="row">
+      <div class="colorWrap">
+        <label for="colorText" style="font-size:13px;color:var(--muted)">Color</label>
+        <input id="colorPicker" type="color" value="#ffffff" />
+        <input id="colorText" type="text" value="#ffffff" style="width:160px; padding:10px 12px; font-size:14px;" />
+      </div>
+
       <button id="exportBtn" type="button">Export SVG</button>
       <button id="copyBtn" type="button">Copy SVG</button>
-      <button id="resetBtn" type="button">Blob mode</button>
+      <button id="blobBtn" type="button">Blob mode</button>
     </div>
 
-    <div class="chips">
-      Shapes: <code>circle</code> <code>triangle</code> <code>square</code> <code>pentagon</code> <code>hexagon</code> <code>star</code> <code>blob</code>
+    <div class="examples">
+      Examples: <code>circle</code> <code>triangle</code> <code>square</code> <code>ngon 9</code> <code>star 7</code> <code>color hotpink</code><br/>
+      Custom: paste an SVG path like <code>M 0 -140 C ... Z</code> (any shape) or use <code>path: M ... Z</code>
     </div>
 
-    <div class="hint">
-      Behavior: In <code>blob</code> mode it moves (alive). When you choose a real shape, it morphs slowly and then <b>stops moving</b>.
-      Export gives you a standalone SVG of the current final shape.
+    <div class="small">
+      Rules you asked for: the blob is only “alive” in <code>blob</code> mode. When you choose a shape (built-in or custom path),
+      it morphs slowly and then <b>freezes perfectly</b>. Export saves exactly what you see.
     </div>
   </div>
 
 <script>
 (() => {
-  // ====== Math helpers ======
+  // ========= Basics =========
   const TAU = Math.PI * 2;
-  const lerp = (a, b, t) => a + (b - a) * t;
-  const normalize = (arr) => {
-    const avg = arr.reduce((s,v)=>s+v,0) / arr.length;
-    return arr.map(v => v / avg);
-  };
+  const lerp = (a,b,t) => a + (b-a)*t;
 
-  // Catmull-Rom -> Bezier (smooth closed curve)
+  const svgRoot = document.getElementById("svgRoot");
+  const pathEl  = document.getElementById("shapePath");
+  const helper  = document.getElementById("helperPath");
+
+  const cmdInput = document.getElementById("cmd");
+  const colorPicker = document.getElementById("colorPicker");
+  const colorText   = document.getElementById("colorText");
+
+  const exportBtn = document.getElementById("exportBtn");
+  const copyBtn   = document.getElementById("copyBtn");
+  const blobBtn   = document.getElementById("blobBtn");
+
+  const POINTS = 120;     // smooth enough, still exports fine
+  const BASE_R = 140;     // size in viewBox
+
+  // Blob wobble only in blob mode
+  const wobbleAmp = 0.085;
+  const wobbleSpeed = 0.95;
+
+  // modes:
+  // - blob: animate forever
+  // - shape: morph to target and freeze (stop animating) when settled
+  let mode = "blob";
+  let activeLabel = "blob";
+
+  // points arrays: same length always
+  let currentPts = makeBlobBasePoints(POINTS);
+  let targetPts  = makeBlobBasePoints(POINTS);
+
+  // per-point deterministic phases for organic motion
+  const phase = Array.from({length: POINTS}, (_, i) => {
+    const th = (i / POINTS) * TAU;
+    return 3.1 * Math.sin(th * 2.7 + 1.2) + 2.0 * Math.sin(th * 1.3 - 0.5);
+  });
+
+  // last frozen path for export / stillness
+  let frozenD = "";
+
+  // ========= Path building (smooth closed curve) =========
   function pointsToClosedPath(pts) {
     const n = pts.length;
     const p = (i) => pts[(i + n) % n];
     let d = "";
-
     for (let i = 0; i < n; i++) {
       const p0 = p(i - 1), p1 = p(i), p2 = p(i + 1), p3 = p(i + 2);
       const c1x = p1.x + (p2.x - p0.x) / 6;
@@ -102,218 +152,332 @@
     return d + "Z";
   }
 
-  // Regular n-gon polar radius (circumradius 1)
-  function ngonRadius(theta, n) {
-    const a = TAU / n;
-    const t = ((theta % a) + a) % a; // 0..a
-    return Math.cos(Math.PI / n) / Math.cos(t - a / 2);
-  }
-
-  // ====== Shape generators (as radial multipliers) ======
-  function makeRadii(kind, count) {
-    const radii = new Array(count).fill(1);
-
-    if (kind === "circle") return radii;
-
-    if (kind === "triangle") {
-      for (let i=0; i<count; i++) radii[i] = ngonRadius((i/count)*TAU, 3);
-      return normalize(radii);
-    }
-    if (kind === "square") {
-      for (let i=0; i<count; i++) radii[i] = ngonRadius((i/count)*TAU, 4);
-      return normalize(radii);
-    }
-    if (kind === "pentagon") {
-      for (let i=0; i<count; i++) radii[i] = ngonRadius((i/count)*TAU, 5);
-      return normalize(radii);
-    }
-    if (kind === "hexagon") {
-      for (let i=0; i<count; i++) radii[i] = ngonRadius((i/count)*TAU, 6);
-      return normalize(radii);
-    }
-    if (kind === "star") {
-      // A crisp-ish 5-spike star profile (still smoothed by curve)
-      const spikes = 5;
-      for (let i=0; i<count; i++) {
-        const th = (i / count) * TAU;
-        const s = (Math.cos(th * spikes) + 1) / 2; // 0..1
-        radii[i] = lerp(0.55, 1.25, s);
-      }
-      return normalize(radii);
-    }
-
-    // blob (alive base)
+  // ========= Built-in generators (return POINTS points) =========
+  function makeCirclePoints(count, r=BASE_R) {
+    const pts = [];
     for (let i=0; i<count; i++) {
       const th = (i / count) * TAU;
-      radii[i] =
+      pts.push({ x: r * Math.cos(th), y: r * Math.sin(th) });
+    }
+    return pts;
+  }
+
+  // Regular n-gon vertices, then resample perimeter to 'count'
+  function makeNgonPoints(count, n, r=BASE_R, rotation=-Math.PI/2) {
+    const verts = [];
+    for (let k=0; k<n; k++) {
+      const th = rotation + (k / n) * TAU;
+      verts.push({ x: r * Math.cos(th), y: r * Math.sin(th) });
+    }
+    return resampleClosedPolyline(verts, count);
+  }
+
+  function makeStarPoints(count, spikes=5, inner=0.55, outer=1.0, r=BASE_R, rotation=-Math.PI/2) {
+    const verts = [];
+    const total = spikes * 2;
+    for (let k=0; k<total; k++) {
+      const isOuter = (k % 2 === 0);
+      const rr = r * (isOuter ? outer : inner);
+      const th = rotation + (k / total) * TAU;
+      verts.push({ x: rr * Math.cos(th), y: rr * Math.sin(th) });
+    }
+    return resampleClosedPolyline(verts, count);
+  }
+
+  function makeBlobBasePoints(count, r=BASE_R) {
+    const pts = [];
+    for (let i=0; i<count; i++) {
+      const th = (i / count) * TAU;
+      const mult =
         1 +
         0.16 * Math.sin(th * 2 + 0.8) +
         0.10 * Math.sin(th * 3 - 1.4) +
         0.07 * Math.sin(th * 5 + 2.2);
+      pts.push({ x: (r * mult) * Math.cos(th), y: (r * mult) * Math.sin(th) });
     }
-    return normalize(radii);
+    // normalize size
+    return normalizePointsToRadius(pts, r);
   }
 
-  // ====== Setup ======
-  const svgRoot = document.getElementById("svgRoot");
-  const pathEl  = document.getElementById("shapePath");
-  const input   = document.getElementById("shapeInput");
-  const exportBtn = document.getElementById("exportBtn");
-  const copyBtn   = document.getElementById("copyBtn");
-  const resetBtn  = document.getElementById("resetBtn");
+  // ========= Resampling + normalization =========
+  function dist(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
 
-  const POINTS = 96;     // smoother edges, still export-friendly
-  const BASE_R = 140;    // size inside viewBox
+  function resampleClosedPolyline(verts, count) {
+    // verts are corner points of a closed polyline (implicit close)
+    const pts = verts.slice();
+    // compute edge lengths
+    const segs = [];
+    let total = 0;
+    for (let i=0; i<pts.length; i++) {
+      const a = pts[i], b = pts[(i+1) % pts.length];
+      const L = dist(a,b);
+      segs.push(L);
+      total += L;
+    }
+    const step = total / count;
 
-  // "Alive" wobble only in blob mode
-  const wobbleAmp   = 0.08;
-  const wobbleSpeed = 0.9;
+    const out = [];
+    let segIndex = 0;
+    let segPos = 0; // distance along current segment
+    let traveled = 0;
 
-  // Current & target radii
-  let current = makeRadii("blob", POINTS);
-  let target  = makeRadii("blob", POINTS);
+    // starting point
+    let a = pts[0];
+    let b = pts[1 % pts.length];
+    let segLen = segs[0];
 
-  // Mode controls motion:
-  // - "blob": animate (alive)
-  // - "shape": no wobble, no breathing, just morph until settled then stop changing
-  let mode = "blob";
-  let activeShape = "blob";
+    for (let i=0; i<count; i++) {
+      const targetDist = i * step;
+      while (traveled + (segLen - segPos) < targetDist) {
+        traveled += (segLen - segPos);
+        segIndex = (segIndex + 1) % pts.length;
+        a = pts[segIndex];
+        b = pts[(segIndex + 1) % pts.length];
+        segLen = segs[segIndex];
+        segPos = 0;
+      }
+      const remain = targetDist - traveled;
+      const t = segLen === 0 ? 0 : (segPos + remain) / segLen;
+      out.push({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) });
+    }
+    return out;
+  }
 
-  // Deterministic per-point phase offsets
-  const phase = Array.from({length: POINTS}, (_, i) => {
-    const th = (i / POINTS) * TAU;
-    return 3.1 * Math.sin(th * 2.7 + 1.2) + 2.0 * Math.sin(th * 1.3 - 0.5);
-  });
+  function normalizePointsToRadius(pts, targetR=BASE_R) {
+    // center at centroid then scale so max radius ~= targetR
+    const c = pts.reduce((s,p)=>({x:s.x+p.x,y:s.y+p.y}), {x:0,y:0});
+    c.x /= pts.length; c.y /= pts.length;
+    const centered = pts.map(p => ({x:p.x-c.x, y:p.y-c.y}));
+    let maxR = 0;
+    for (const p of centered) maxR = Math.max(maxR, Math.hypot(p.x,p.y));
+    const scale = maxR === 0 ? 1 : (targetR / maxR);
+    return centered.map(p => ({x:p.x*scale, y:p.y*scale}));
+  }
 
-  // Keep last exported geometry (for "stay still")
-  let frozenPathD = "";
+  // ========= Custom shape from SVG path =========
+  function pointsFromPathD(d, count) {
+    try {
+      helper.setAttribute("d", d);
+      const len = helper.getTotalLength();
+      if (!isFinite(len) || len <= 0) return null;
 
-  // ====== Command handling ======
-  const known = ["circle","triangle","square","pentagon","hexagon","star","blob"];
+      const pts = [];
+      for (let i=0; i<count; i++) {
+        const p = helper.getPointAtLength((i / count) * len);
+        pts.push({ x: p.x, y: p.y });
+      }
+      return normalizePointsToRadius(pts, BASE_R);
+    } catch {
+      return null;
+    }
+  }
 
-  function setShape(nameRaw) {
-    const name = (nameRaw || "").trim().toLowerCase();
-    const pick = known.includes(name) ? name : "blob";
+  // ========= Command parsing =========
+  function looksLikePath(str) {
+    const s = str.trim();
+    return /^[Mm]\s*[-\d.]/.test(s); // starts with M or m + number
+  }
 
-    activeShape = pick;
-    target = makeRadii(pick, POINTS);
+  function applyColor(colorStr) {
+    const s = colorStr.trim();
+    if (!s) return;
+    // Let the browser validate CSS color by assigning it
+    const test = document.createElement("div");
+    test.style.color = "";
+    test.style.color = s;
+    if (test.style.color) {
+      pathEl.setAttribute("fill", s);
+      colorText.value = s;
+      // update picker if it's a hex
+      if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(s)) colorPicker.value = s.length===4 ? expandHex3(s) : s;
+    }
+  }
 
-    if (pick === "blob") {
+  function expandHex3(h) {
+    // "#abc" -> "#aabbcc"
+    return "#" + h.slice(1).split("").map(ch => ch+ch).join("");
+  }
+
+  function setTargetPoints(label, pts) {
+    activeLabel = label;
+    targetPts = pts;
+
+    frozenD = "";
+    if (label === "blob") {
       mode = "blob";
     } else {
       mode = "shape";
     }
+    restartLoop();
   }
 
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") setShape(input.value);
-  });
+  function handleCommand(raw) {
+    const input = raw.trim();
+    if (!input) return;
 
-  resetBtn.addEventListener("click", () => {
-    input.value = "blob";
-    setShape("blob");
-  });
+    // Allow multiple instructions separated by ";"
+    const parts = input.split(";").map(p => p.trim()).filter(Boolean);
 
-  // ====== Build path from current radii ======
-  function buildPath(time, allowWobble) {
-    const pts = [];
-    for (let i=0; i<POINTS; i++) {
-      const th = (i / POINTS) * TAU;
+    for (const part of parts) {
+      const lower = part.toLowerCase();
 
-      let wobble = 1;
-      if (allowWobble) {
-        wobble =
-          1 +
-          wobbleAmp * Math.sin(time * (wobbleSpeed * 2.0) + phase[i]) +
-          (wobbleAmp * 0.55) * Math.sin(time * (wobbleSpeed * 3.1) + phase[i] * 0.7);
+      // Color commands: "color red" or just "#ff00aa"
+      if (lower.startsWith("color ")) {
+        applyColor(part.slice(6));
+        continue;
+      }
+      if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(part) || /^rgb\(|^hsl\(|^[a-z]+$/i.test(part)) {
+        // If it's a valid CSS color, applyColor will accept it
+        const before = pathEl.getAttribute("fill");
+        applyColor(part);
+        if (pathEl.getAttribute("fill") !== before) continue;
       }
 
-      const r = BASE_R * current[i] * wobble;
-      pts.push({ x: r * Math.cos(th), y: r * Math.sin(th) });
+      // Explicit path: "path: M ... Z"
+      if (lower.startsWith("path:")) {
+        const d = part.slice(5).trim();
+        const pts = pointsFromPathD(d, POINTS);
+        if (pts) setTargetPoints("custom", pts);
+        continue;
+      }
+
+      // If user pasted a raw path starting with M
+      if (looksLikePath(part)) {
+        const pts = pointsFromPathD(part, POINTS);
+        if (pts) setTargetPoints("custom", pts);
+        continue;
+      }
+
+      // Built-in-ish but not limited: allow "ngon N" and "star N"
+      if (lower === "blob") {
+        setTargetPoints("blob", makeBlobBasePoints(POINTS));
+        continue;
+      }
+      if (lower === "circle") {
+        setTargetPoints("circle", makeCirclePoints(POINTS, BASE_R));
+        continue;
+      }
+      if (lower === "triangle") {
+        setTargetPoints("triangle", makeNgonPoints(POINTS, 3));
+        continue;
+      }
+      if (lower === "square") {
+        setTargetPoints("square", makeNgonPoints(POINTS, 4));
+        continue;
+      }
+      if (lower === "pentagon") {
+        setTargetPoints("pentagon", makeNgonPoints(POINTS, 5));
+        continue;
+      }
+      if (lower === "hexagon") {
+        setTargetPoints("hexagon", makeNgonPoints(POINTS, 6));
+        continue;
+      }
+      if (lower.startsWith("ngon ")) {
+        const n = parseInt(lower.split(/\s+/)[1], 10);
+        if (Number.isFinite(n) && n >= 3 && n <= 200) {
+          setTargetPoints(`ngon${n}`, makeNgonPoints(POINTS, n));
+        }
+        continue;
+      }
+      if (lower.startsWith("star ")) {
+        const n = parseInt(lower.split(/\s+/)[1], 10);
+        if (Number.isFinite(n) && n >= 3 && n <= 50) {
+          setTargetPoints(`star${n}`, makeStarPoints(POINTS, n, 0.52, 1.0));
+        }
+        continue;
+      }
+
+      // If they typed "anything", we can’t guess geometry from arbitrary words.
+      // BUT we *can* guide them: paste an SVG path (unlimited).
+      // So if unrecognized: no crash—just switch back to blob.
+      setTargetPoints("blob", makeBlobBasePoints(POINTS));
     }
-    return pointsToClosedPath(pts);
   }
 
-  // ====== Animation loop ======
+  // ========= Animation =========
   let last = performance.now();
   let time = 0;
+  let rafId = null;
 
-  // Morph speed: slower looks nicer
-  const morphSpeed = 3.0;
+  const morphSpeed = 2.6; // slower morph as requested
+
+  function restartLoop() {
+    if (rafId) cancelAnimationFrame(rafId);
+    last = performance.now();
+    rafId = requestAnimationFrame(tick);
+  }
 
   function tick(now) {
     const dt = (now - last) / 1000;
     last = now;
     time += dt;
 
-    // Smooth morph step
+    // Morph current -> target
     const alpha = 1 - Math.exp(-morphSpeed * dt);
     let maxDelta = 0;
 
     for (let i=0; i<POINTS; i++) {
-      const before = current[i];
-      current[i] = lerp(current[i], target[i], alpha);
-      maxDelta = Math.max(maxDelta, Math.abs(current[i] - before));
+      const a = currentPts[i], b = targetPts[i];
+      const nx = lerp(a.x, b.x, alpha);
+      const ny = lerp(a.y, b.y, alpha);
+      maxDelta = Math.max(maxDelta, Math.hypot(nx - a.x, ny - a.y));
+      a.x = nx; a.y = ny;
     }
 
-    const allowWobble = (mode === "blob");
-    const d = buildPath(time, allowWobble);
+    // Render: wobble only in blob mode
+    let renderPts;
+    if (mode === "blob") {
+      renderPts = currentPts.map((p,i) => {
+        const th = Math.atan2(p.y, p.x);
+        const r  = Math.hypot(p.x, p.y);
+
+        const w =
+          1 +
+          wobbleAmp * Math.sin(time * (wobbleSpeed * 2.0) + phase[i]) +
+          (wobbleAmp * 0.55) * Math.sin(time * (wobbleSpeed * 3.1) + phase[i] * 0.7);
+
+        return { x: (r*w) * Math.cos(th), y: (r*w) * Math.sin(th) };
+      });
+    } else {
+      // shape mode: EXACT still, no wobble
+      renderPts = currentPts;
+    }
+
+    const d = pointsToClosedPath(renderPts);
     pathEl.setAttribute("d", d);
 
-    // If we are in a real shape mode, once morph is basically done, freeze it (no movement)
-    if (mode === "shape") {
-      // When the morph deltas are tiny, stop updating and lock the final path.
-      if (maxDelta < 0.00025) {
-        frozenPathD = buildPath(time, false); // build without wobble
-        pathEl.setAttribute("d", frozenPathD);
-        // Stop the animation loop to keep it perfectly still
-        return;
-      }
+    // Freeze when settled in shape mode
+    if (mode === "shape" && maxDelta < 0.02) {
+      frozenD = pointsToClosedPath(currentPts); // store stable, non-wobble
+      pathEl.setAttribute("d", frozenD);
+      rafId = null; // stop animating completely
+      return;
     }
 
-    requestAnimationFrame(tick);
+    rafId = requestAnimationFrame(tick);
   }
 
-  // Start
-  setShape("blob");
-  requestAnimationFrame(tick);
-
-  // If user switches from shape back to blob, we need to restart the loop
-  function restartLoopIfNeeded() {
-    // If we were stopped (in shape mode), restart animation frame
-    last = performance.now();
-    requestAnimationFrame(tick);
+  // ========= Color controls =========
+  function setColorBoth(val) {
+    applyColor(val);
   }
 
-  // Wrap setShape to restart loop when needed
-  const _setShape = setShape;
-  setShape = (name) => {
-    const wasStopped = (mode === "shape" && frozenPathD);
-    _setShape(name);
-    frozenPathD = "";
-    // Always restart loop when changing shapes
-    restartLoopIfNeeded();
-  };
-
-  // Update input-driven setShape to use wrapped version
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") setShape(input.value);
+  colorPicker.addEventListener("input", () => setColorBoth(colorPicker.value));
+  colorText.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") setColorBoth(colorText.value);
   });
 
-  // ====== Export current shape as a standalone SVG ======
-  function getExportPathD() {
-    // If we froze, use frozen; otherwise use current attribute
-    return frozenPathD || pathEl.getAttribute("d") || "";
+  // ========= Export =========
+  function getExportD() {
+    return frozenD || pathEl.getAttribute("d") || "";
   }
 
   function exportSVGString() {
-    const d = getExportPathD();
     const vb = svgRoot.getAttribute("viewBox") || "-220 -220 440 440";
-    return (
-`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">
-  <path d="${d}" fill="#ffffff"/>
-</svg>`
-    );
+    const fill = pathEl.getAttribute("fill") || "#ffffff";
+    const d = getExportD();
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">\n  <path d="${d}" fill="${fill}"/>\n</svg>\n`;
   }
 
   function downloadText(filename, text) {
@@ -329,7 +493,7 @@
   }
 
   exportBtn.addEventListener("click", () => {
-    const name = (activeShape && activeShape !== "blob") ? activeShape : "shape";
+    const name = activeLabel && activeLabel !== "blob" ? activeLabel : "shape";
     downloadText(`${name}.svg`, exportSVGString());
   });
 
@@ -340,10 +504,26 @@
       copyBtn.textContent = "Copied!";
       setTimeout(() => (copyBtn.textContent = "Copy SVG"), 900);
     } catch {
-      // fallback: prompt
       window.prompt("Copy SVG:", txt);
     }
   });
+
+  blobBtn.addEventListener("click", () => {
+    cmdInput.value = "blob";
+    setTargetPoints("blob", makeBlobBasePoints(POINTS));
+    restartLoop();
+  });
+
+  // ========= Input events =========
+  cmdInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") handleCommand(cmdInput.value);
+  });
+
+  // ========= Boot =========
+  // default white fill
+  pathEl.setAttribute("fill", "#ffffff");
+  setTargetPoints("blob", makeBlobBasePoints(POINTS));
+  restartLoop();
 })();
 </script>
 </body>
