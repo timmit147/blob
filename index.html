@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Blob → Shape (command input)</title>
+<title>Blob → Shape</title>
 
 <style>
 :root{
   --bg:#0b0f19;
   --fg:#e9eefc;
+  --muted:rgba(233,238,252,.68);
   --ui:rgba(255,255,255,.08);
   --ui-b:rgba(255,255,255,.14);
 }
@@ -56,16 +57,101 @@ svg{
 
 /* smooth changes */
 #shapeGroup{
-  transition: transform 320ms ease;
+  transition: transform 1200ms cubic-bezier(.2,.9,.2,1);
   transform-origin: 0px 0px;
 }
 svg path{
-  transition: fill 280ms ease;
+  transition: fill 600ms ease;
 }
+
+/* info button */
+.infoBtn{
+  position:fixed;
+  top:14px;
+  right:14px;
+  width:38px;
+  height:38px;
+  border-radius:12px;
+  border:1px solid var(--ui-b);
+  background:var(--ui);
+  color:var(--fg);
+  display:grid;
+  place-items:center;
+  cursor:pointer;
+  pointer-events:auto;
+}
+.infoBtn:hover{background:rgba(255,255,255,.12)}
+
+/* modal */
+.modal{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.55);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  pointer-events:auto;
+}
+.modal.open{display:flex}
+.card{
+  width:min(780px,92vw);
+  background:rgba(10,14,25,.95);
+  border:1px solid var(--ui-b);
+  border-radius:16px;
+  padding:16px;
+  box-shadow:0 18px 60px rgba(0,0,0,.6);
+}
+.card h3{margin:0 0 10px;font-size:16px}
+.card p{margin:8px 0;color:var(--muted);font-size:14px;line-height:1.45}
+.grid{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:12px;
+  margin-top:12px;
+}
+.box{
+  border:1px solid rgba(255,255,255,.10);
+  background:rgba(255,255,255,.05);
+  border-radius:12px;
+  padding:10px;
+}
+.box h4{margin:0 0 8px;font-size:14px;color:var(--fg)}
+.list{
+  margin:0;
+  padding-left:18px;
+  color:var(--muted);
+  font-size:14px;
+  line-height:1.45;
+}
+code{
+  background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.12);
+  padding:2px 6px;
+  border-radius:8px;
+  color:var(--fg);
+  font-size:13px;
+}
+.actions{
+  display:flex;
+  justify-content:flex-end;
+  margin-top:12px;
+}
+.btn{
+  border:1px solid var(--ui-b);
+  background:var(--ui);
+  color:var(--fg);
+  border-radius:12px;
+  padding:10px 12px;
+  font-size:14px;
+  cursor:pointer;
+}
+.btn:hover{background:rgba(255,255,255,.12)}
 </style>
 </head>
 
 <body>
+
+<button class="infoBtn" id="infoBtn" aria-label="Info">i</button>
 
 <div class="stage">
   <svg id="svgRoot" viewBox="-220 -220 440 440" xmlns="http://www.w3.org/2000/svg">
@@ -75,7 +161,42 @@ svg path{
 </div>
 
 <div class="bottom">
-  <input id="cmd" placeholder='type shape name (e.g. "heart") — commands: copy | export | rotate 180 | #86c5e4 | red'/>
+  <input id="cmd" placeholder="type shape name" autocomplete="off" spellcheck="false"/>
+</div>
+
+<div class="modal" id="modal" role="dialog" aria-modal="true">
+  <div class="card">
+    <h3>Info</h3>
+    <p>
+      Type a shape name that exists in your <code>/shapes</code> folder (e.g. <code>heart</code>, <code>triangle</code>).
+      Press <b>Enter</b> to run commands. Clearing the input returns to blob mode.
+    </p>
+
+    <div class="grid">
+      <div class="box">
+        <h4>Commands (press Enter)</h4>
+        <ul class="list">
+          <li><code>copy</code> — copy current SVG</li>
+          <li><code>export</code> — download SVG</li>
+          <li><code>rotate 180</code> — rotate relative (slow & smooth)</li>
+          <li><code>rotate -180</code> — rotate back</li>
+          <li><code>red</code> / <code>#86c5e4</code> / <code>rgb(10,20,30)</code> — change color</li>
+        </ul>
+      </div>
+
+      <div class="box">
+        <h4>Shapes list (edit in code)</h4>
+        <p style="margin:0 0 8px;color:var(--muted);font-size:13px">
+          This list is shown here for convenience (browsers can’t auto-list your folder).
+        </p>
+        <ul class="list" id="shapeList"></ul>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn" id="closeBtn">Close</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -83,53 +204,95 @@ svg path{
   const TAU = Math.PI * 2;
   const lerp = (a,b,t)=>a+(b-a)*t;
 
-  const POINTS = 140;     // smoother & rounder
+  // ====== Edit this list to match what you put in /shapes ======
+  const SHAPES = [
+    "circle","oval","triangle","square","rectangle","diamond",
+    "pentagon","hexagon","star","heart","lightning bolt",
+    "plus","cross","check","close","menu","search","home","user",
+    "play","pause","stop","download","upload","arrow up","arrow right","chevron",
+    "capsule","drop","trapezoid","parallelogram","settings","notification"
+  ];
+
+  // More points => smoother blob & smoother morph
+  const POINTS = 200;
   const BASE_R = 140;
 
   const group  = document.getElementById("shapeGroup");
   const helper = document.getElementById("helperPath");
   const cmd    = document.getElementById("cmd");
 
+  const infoBtn  = document.getElementById("infoBtn");
+  const modal    = document.getElementById("modal");
+  const closeBtn = document.getElementById("closeBtn");
+  const shapeListEl = document.getElementById("shapeList");
+
+  // Render list
+  SHAPES.forEach(s => {
+    const li = document.createElement("li");
+    li.textContent = s;
+    shapeListEl.appendChild(li);
+  });
+
   let fillColor = "#ffffff";
   let rotationDeg = 0;
 
-  // blob | shape
-  let mode = "blob";
-  let multiShape = false;       // multi-path => poly rendering to prevent “bridging”
+  let mode = "blob";          // blob | shape
+  let multiShape = false;     // multi-path => poly rendering to prevent bridging
   let raf = null, last = performance.now(), time = 0;
 
-  // Multi-path state: arrays of point arrays
+  // Multi-path state
   let currentSets = [makeBlobPoints()];
   let targetSets  = [makeBlobPoints()];
 
-  // ===== Satisfying, rounder blob =====
-  // (smaller amplitudes + breathing = less “ugly spikes”)
+  // phase offsets for blob wobble (stable per vertex)
   const blobPhase = Array.from({length: POINTS}, (_, i) => {
     const th = (i / POINTS) * TAU;
-    return 2.6*Math.sin(th*2.2 + 0.9) + 1.7*Math.sin(th*1.2 - 0.4);
+    return 2.4*Math.sin(th*2.2 + 0.9) + 1.6*Math.sin(th*1.2 - 0.4);
   });
 
+  // ====== Blob: rounder + smoother radii ======
+  function smoothArray(arr, passes=2){
+    const n = arr.length;
+    let a = arr.slice();
+    for(let p=0;p<passes;p++){
+      const b = new Array(n);
+      for(let i=0;i<n;i++){
+        const prev = a[(i-1+n)%n];
+        const cur  = a[i];
+        const next = a[(i+1)%n];
+        b[i] = (prev + 2*cur + next) / 4;
+      }
+      a = b;
+    }
+    return a;
+  }
+
   function makeBlobPoints(){
-    const pts=[];
+    const radii = [];
     for(let i=0;i<POINTS;i++){
       const th=(i/POINTS)*TAU;
 
-      // rounder base (reduced deformation)
+      // rounder base profile (reduced high-frequency)
       const base =
         1
-        + 0.08*Math.sin(th*2 + 0.6)
-        + 0.05*Math.sin(th*3 - 1.2)
-        + 0.03*Math.sin(th*5 + 2.1);
+        + 0.06*Math.sin(th*2 + 0.6)
+        + 0.04*Math.sin(th*3 - 1.1)
+        + 0.02*Math.sin(th*5 + 2.0);
 
-      const r = BASE_R * base;
+      radii.push(BASE_R * base);
+    }
 
+    const smoothR = smoothArray(radii, 3);
+    const pts=[];
+    for(let i=0;i<POINTS;i++){
+      const th=(i/POINTS)*TAU;
+      const r = smoothR[i];
       pts.push({x:r*Math.cos(th), y:r*Math.sin(th)});
     }
     return pts;
   }
 
-  // ===== Path building =====
-  // Smooth (nice for single)
+  // ====== Path builders ======
   function toSmoothPath(pts){
     const n = pts.length;
     const p = (i)=>pts[(i+n)%n];
@@ -146,7 +309,7 @@ svg path{
     return d + "Z";
   }
 
-  // Poly (prevents bulging/bridging in multi-part icons)
+  // For multi-part shapes: no bulging, no connecting
   function toPolyPath(pts){
     let d = `M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)} `;
     for(let i=1;i<pts.length;i++){
@@ -155,25 +318,18 @@ svg path{
     return d + "Z";
   }
 
-  // ===== Normalization to prevent “shrink then morph” =====
-  // We enforce:
-  // 1) overall centroid at (0,0)
-  // 2) overall max radius = BASE_R
-  // This makes morphing look like true shape-to-shape, not shrink-expand.
+  // ====== Stabilize size/center (prevents “shrink then morph”) ======
   function stabilizeSizeAndCenter(sets){
-    // centroid across ALL points
     let cx=0, cy=0, count=0;
     for(const pts of sets){
       for(const p of pts){ cx+=p.x; cy+=p.y; count++; }
     }
     cx/=count; cy/=count;
 
-    // recenter
     for(const pts of sets){
       for(const p of pts){ p.x-=cx; p.y-=cy; }
     }
 
-    // scale to fixed size
     let maxR=0;
     for(const pts of sets){
       for(const p of pts){ maxR=Math.max(maxR, Math.hypot(p.x,p.y)); }
@@ -190,11 +346,66 @@ svg path{
     return {x:cx/pts.length, y:cy/pts.length};
   }
 
-  // ===== Sampling SVG paths =====
+  // ====== Alignment fix (heart → star twisting) ======
+  // We rotate the point indexing (circular shift) and optionally reverse,
+  // picking the best match to currentPts to avoid weird twist morphs.
+  function alignTargetToCurrent(currentPts, targetPts){
+    const n = currentPts.length;
+    const step = 4; // evaluate every 4th point for speed
+    const candidates = [];
+
+    function scoreFor(shift, reversed){
+      let sum = 0;
+      for(let i=0;i<n;i+=step){
+        const ti = reversed ? ( (shift - i) % n + n ) % n : ( (i + shift) % n );
+        const dx = currentPts[i].x - targetPts[ti].x;
+        const dy = currentPts[i].y - targetPts[ti].y;
+        sum += dx*dx + dy*dy;
+      }
+      return sum;
+    }
+
+    // Try a subset of shifts to find best quickly, then refine around it
+    const coarseStep = 8;
+    for(let sh=0; sh<n; sh+=coarseStep){
+      candidates.push({sh, rev:false, s:scoreFor(sh,false)});
+      candidates.push({sh, rev:true,  s:scoreFor(sh,true)});
+    }
+    candidates.sort((a,b)=>a.s-b.s);
+    let best = candidates[0];
+
+    // refine around best shift
+    let bestScore = best.s;
+    let bestShift = best.sh;
+    let bestRev   = best.rev;
+
+    for(let d=-coarseStep; d<=coarseStep; d++){
+      const sh = (best.sh + d + n) % n;
+      for(const rev of [false,true]){
+        const sc = scoreFor(sh, rev);
+        if(sc < bestScore){
+          bestScore = sc;
+          bestShift = sh;
+          bestRev = rev;
+        }
+      }
+    }
+
+    // apply to build aligned array
+    const out = new Array(n);
+    for(let i=0;i<n;i++){
+      const ti = bestRev ? ((bestShift - i) % n + n) % n : ((i + bestShift) % n);
+      out[i] = {x: targetPts[ti].x, y: targetPts[ti].y};
+    }
+    return out;
+  }
+
+  // ====== Sampling SVG paths ======
   function pointsFromPathD(d){
     helper.setAttribute("d", d);
     const L = helper.getTotalLength();
     if(!isFinite(L) || L <= 0) return null;
+
     const pts=[];
     for(let i=0;i<POINTS;i++){
       const p = helper.getPointAtLength((i/POINTS) * L);
@@ -203,12 +414,10 @@ svg path{
     return pts;
   }
 
-  // Normalize multi-path shape as a group (keep separation), then stabilize
   function normalizeLoadedSets(sets){
-    // center & scale by overall bounds
     stabilizeSizeAndCenter(sets);
 
-    // tiny per-piece shrink to avoid “edge kissing” (doesn't change gap noticeably)
+    // tiny per-piece shrink to avoid “touching” in multi shapes
     if(sets.length > 1){
       const shrink = 0.992;
       for(const pts of sets){
@@ -223,7 +432,7 @@ svg path{
     return sets;
   }
 
-  // ===== SVG DOM helpers =====
+  // ====== DOM helpers ======
   function ensurePathEls(n){
     while(group.children.length < n){
       const p = document.createElementNS("http://www.w3.org/2000/svg","path");
@@ -233,9 +442,7 @@ svg path{
     while(group.children.length > n){
       group.removeChild(group.lastChild);
     }
-    for(const el of group.children){
-      el.setAttribute("fill", fillColor);
-    }
+    for(const el of group.children) el.setAttribute("fill", fillColor);
   }
 
   function setFill(c){
@@ -243,12 +450,12 @@ svg path{
     for(const el of group.children) el.setAttribute("fill", c);
   }
 
-  function setRotation(newDeg){
-    rotationDeg = newDeg;
+  function setRotation(deg){
+    rotationDeg = deg;
     group.setAttribute("transform", `rotate(${rotationDeg})`);
   }
 
-  // ===== Animation =====
+  // ====== Animation ======
   function start(){
     if(raf) cancelAnimationFrame(raf);
     last = performance.now();
@@ -260,10 +467,9 @@ svg path{
     last = now;
     time += dt;
 
-    const alpha = 1 - Math.exp(-2.7 * dt); // smooth morph
+    const alpha = 1 - Math.exp(-2.7 * dt);
     let done = true;
 
-    // morph
     for(let s=0; s<currentSets.length; s++){
       const a = currentSets[s];
       const b = targetSets[s];
@@ -275,18 +481,16 @@ svg path{
       }
     }
 
-    // KEY: stabilize size every frame to prevent shrink-expand
+    // prevent shrink-expand
     stabilizeSizeAndCenter(currentSets);
 
     ensurePathEls(currentSets.length);
 
-    // render
     for(let s=0; s<currentSets.length; s++){
       let renderPts = currentSets[s];
 
       if(mode === "blob"){
-        // gentle breathing + round wobble
-        const breathe = 1 + 0.02*Math.sin(time*1.1);
+        const breathe = 1 + 0.02*Math.sin(time*1.0);
 
         renderPts = currentSets[s].map((p,i)=>{
           const r = Math.hypot(p.x,p.y);
@@ -294,8 +498,8 @@ svg path{
 
           const wobble =
             1
-            + 0.055*Math.sin(time*1.9 + blobPhase[i] + s*0.6)
-            + 0.030*Math.sin(time*2.7 + blobPhase[i]*0.7 + s*0.35);
+            + 0.045*Math.sin(time*1.7 + blobPhase[i] + s*0.5)
+            + 0.020*Math.sin(time*2.5 + blobPhase[i]*0.7 + s*0.3);
 
           const rr = r * wobble * breathe;
           return { x: rr*Math.cos(th), y: rr*Math.sin(th) };
@@ -307,13 +511,13 @@ svg path{
     }
 
     if(mode === "shape" && done){
-      raf = null; // freeze perfectly
+      raf = null; // freeze
       return;
     }
     raf = requestAnimationFrame(tick);
   }
 
-  // ===== Hybrid local shapes loader =====
+  // ====== Hybrid shape loader ======
   const cache = {};
   async function loadShapeByName(name){
     const file = name.toLowerCase().trim().replace(/\s+/g,"-") + ".svg";
@@ -343,7 +547,7 @@ svg path{
     }
   }
 
-  // Spawn blob sets matching target path count, positioned near each target centroid
+  // Spawn blobs to match multi-path count
   function spawnFromTargets(targetSetsIn){
     const spawned = targetSetsIn.map((tset)=>{
       const b = makeBlobPoints();
@@ -359,7 +563,7 @@ svg path{
     return spawned;
   }
 
-  // ===== Command parsing =====
+  // ====== Commands (only on ENTER) ======
   function isCssColor(str){
     const s = str.trim();
     if(!s) return false;
@@ -367,6 +571,17 @@ svg path{
     test.style.color = "";
     test.style.color = s;
     return !!test.style.color;
+  }
+
+  function exportSVGString(){
+    const vb = "-220 -220 440 440";
+    const ds = [...group.children].map(p => p.getAttribute("d") || "").filter(Boolean);
+    const paths = ds.map(d => `    <path d="${d}" fill="${fillColor}"/>`).join("\n");
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">
+  <g transform="rotate(${rotationDeg})">
+${paths}
+  </g>
+</svg>\n`;
   }
 
   function doCopy(){
@@ -386,105 +601,11 @@ svg path{
     URL.revokeObjectURL(url);
   }
 
-  function applyRotateDelta(delta){
-    setRotation(rotationDeg + delta);
-  }
-
-  function exportSVGString(){
-    const vb = "-220 -220 440 440";
-    const ds = [...group.children].map(p => p.getAttribute("d") || "").filter(Boolean);
-    const paths = ds.map(d => `    <path d="${d}" fill="${fillColor}"/>`).join("\n");
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">
-  <g transform="rotate(${rotationDeg})">
-${paths}
-  </g>
-</svg>\n`;
-  }
-
-  // Debounce shape lookup to avoid fetch per keystroke
-  let shapeTimer = null;
-  let lastShapeQuery = "";
-
-  async function tryLoadShape(query){
-    const v = query.trim();
-    if(!v) return;
-
-    // if already active query, skip
-    if(v === lastShapeQuery) return;
-
-    const sets = await loadShapeByName(v);
-    if(!sets) return;
-
-    lastShapeQuery = v;
-    mode = "shape";
-    multiShape = (sets.length > 1);
-
-    if(currentSets.length !== sets.length){
-      currentSets = spawnFromTargets(sets);
-    }
-    targetSets = sets.map(pts => pts.map(p => ({x:p.x, y:p.y}))); // deep copy
-    start();
-  }
-
-  // Execute “instant commands” when input becomes a full command
-  function tryHandleCommandInstant(text){
-    const raw = text.trim();
-    if(!raw) return false;
-
-    const lower = raw.toLowerCase();
-
-    // copy
-    if(lower === "copy"){
-      doCopy();
-      cmd.value = "";
-      lastShapeQuery = "";
-      // back to blob automatically by input handler
-      return true;
-    }
-
-    // export
-    if(lower === "export"){
-      doExport();
-      cmd.value = "";
-      lastShapeQuery = "";
-      return true;
-    }
-
-    // rotate N
-    // examples: "rotate 180", "rotate -90"
-    if(lower.startsWith("rotate ")){
-      const n = parseFloat(raw.slice(7).trim());
-      if(Number.isFinite(n)){
-        applyRotateDelta(n);
-        // keep the command visible briefly then clear
-        cmd.value = "";
-        return true;
-      }
-    }
-
-    // color: hex or named or rgb/hsl
-    if(isCssColor(raw)){
-      setFill(raw);        // transitions via CSS
-      cmd.value = "";
-      return true;
-    }
-
-    return false;
-  }
-
-  // Input behavior:
-  // - empty => blob mode
-  // - if becomes a command => execute + clear
-  // - otherwise debounce shape lookup
-  cmd.addEventListener("input", () => {
-    const v = cmd.value;
-
-    // empty => blob mode
-    if(v.trim() === ""){
-      lastShapeQuery = "";
+  async function applyShape(name){
+    const v = name.trim();
+    if(!v){
       mode = "blob";
       multiShape = false;
-
       currentSets = [makeBlobPoints()];
       targetSets  = [makeBlobPoints()];
       stabilizeSizeAndCenter(currentSets);
@@ -493,29 +614,83 @@ ${paths}
       return;
     }
 
-    // commands
-    if(tryHandleCommandInstant(v)){
-      // input cleared inside; triggering input event may happen next tick
+    const sets = await loadShapeByName(v);
+    if(!sets) return;
+
+    mode = "shape";
+    multiShape = (sets.length > 1);
+
+    if(currentSets.length !== sets.length){
+      currentSets = spawnFromTargets(sets);
+    }
+
+    // Align each target path to its current path to reduce twisting
+    targetSets = sets.map((pts, idx) => {
+      const cur = currentSets[idx];
+      const t   = pts.map(p => ({x:p.x, y:p.y}));
+      return alignTargetToCurrent(cur, t);
+    });
+
+    start();
+  }
+
+  cmd.addEventListener("keydown", async (e) => {
+    if(e.key !== "Enter") return;
+
+    const raw = cmd.value.trim();
+    if(!raw){
+      await applyShape("");
       return;
     }
 
-    // shapes: debounce
-    clearTimeout(shapeTimer);
-    shapeTimer = setTimeout(() => {
-      tryLoadShape(v);
-    }, 220);
+    const lower = raw.toLowerCase();
+
+    // commands (ENTER only)
+    if(lower === "copy"){
+      doCopy();
+      cmd.value = "";
+      return;
+    }
+
+    if(lower === "export"){
+      doExport();
+      cmd.value = "";
+      return;
+    }
+
+    if(lower.startsWith("rotate ")){
+      const n = parseFloat(raw.slice(7).trim());
+      if(Number.isFinite(n)){
+        setRotation(rotationDeg + n);
+        cmd.value = "";
+      }
+      return;
+    }
+
+    if(isCssColor(raw)){
+      setFill(raw); // smooth via CSS transition
+      cmd.value = "";
+      return;
+    }
+
+    // otherwise treat as shape name
+    await applyShape(raw);
   });
 
-  // Optional: Enter forces shape lookup immediately (doesn't hurt auto-recognition)
-  cmd.addEventListener("keydown", (e) => {
-    if(e.key === "Enter"){
-      const v = cmd.value;
-      if(tryHandleCommandInstant(v)) return;
-      tryLoadShape(v);
+  // live: clearing input returns to blob (no enter needed)
+  cmd.addEventListener("input", async () => {
+    if(cmd.value.trim() === ""){
+      await applyShape("");
     }
   });
 
-  // ===== Boot =====
+  // ====== Info modal ======
+  infoBtn.addEventListener("click", () => modal.classList.add("open"));
+  closeBtn.addEventListener("click", () => modal.classList.remove("open"));
+  modal.addEventListener("click", (e) => { if(e.target === modal) modal.classList.remove("open"); });
+  window.addEventListener("keydown", (e) => { if(e.key === "Escape") modal.classList.remove("open"); });
+
+  // ====== Boot ======
   setFill("#ffffff");
   setRotation(0);
   stabilizeSizeAndCenter(currentSets);
