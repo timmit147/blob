@@ -19,18 +19,13 @@
       color:var(--fg);
       overflow:hidden
     }
-    .stage{
-      position:fixed;inset:0;display:grid;place-items:center;pointer-events:none
-    }
-    svg{
-      width:100vw;height:100vh;display:block;
-      filter:drop-shadow(0 18px 40px rgba(0,0,0,.55))
-    }
-
+    .stage{ position:fixed;inset:0;display:grid;place-items:center;pointer-events:none }
+    svg{ width:100vw;height:100vh;display:block; filter:drop-shadow(0 18px 40px rgba(0,0,0,.55)) }
     .bottom{
       position:fixed;left:50%;bottom:22px;transform:translateX(-50%);
-      width:min(780px,92vw);
-      pointer-events:auto;z-index:20
+      width:min(820px,92vw);
+      pointer-events:auto;z-index:20;
+      display:flex;gap:10px;align-items:center;
     }
     .bottom input{
       width:100%;
@@ -56,23 +51,18 @@
       0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,.0)}
       50%{box-shadow:0 0 0 6px rgba(255,255,255,.18)}
     }
-
     #shapeGroup{transform-origin:0 0}
     svg path{transition:fill 600ms ease}
-
     .infoBtn{
       position:fixed;top:14px;right:14px;
-      width:38px;height:38px;
-      border-radius:12px;
+      width:38px;height:38px;border-radius:12px;
       border:1px solid rgba(0,0,0,.18);
       background:#d9d9d9;color:#000;
       display:grid;place-items:center;
-      cursor:pointer;
-      pointer-events:auto;
+      cursor:pointer;pointer-events:auto;
       font-weight:800;z-index:80
     }
     .infoBtn:hover{background:#e6e6e6}
-
     .modal{
       position:fixed;inset:0;background:rgba(0,0,0,.55);
       display:none;align-items:center;justify-content:center;
@@ -89,7 +79,6 @@
     }
     .card h3{margin:0 0 10px;font-size:16px}
     .card p{margin:8px 0;color:var(--muted);font-size:14px;line-height:1.45}
-
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
     .box{
       border:1px solid rgba(255,255,255,.10);
@@ -99,7 +88,6 @@
       min-height:120px
     }
     .box h4{margin:0 0 8px;font-size:14px;color:var(--fg)}
-
     .list{
       margin:0;padding-left:18px;
       color:var(--muted);
@@ -107,18 +95,9 @@
       line-height:1.55
     }
     .list li{margin:0 0 8px 0}
-
-    #shapeList{
-      max-height:220px;
-      overflow-y:auto;
-      padding-right:10px;
-    }
+    #shapeList{ max-height:220px; overflow-y:auto; padding-right:10px; }
     #shapeList::-webkit-scrollbar{width:10px}
-    #shapeList::-webkit-scrollbar-thumb{
-      background:rgba(255,255,255,.16);
-      border-radius:10px
-    }
-
+    #shapeList::-webkit-scrollbar-thumb{ background:rgba(255,255,255,.16); border-radius:10px }
     code{
       background:rgba(255,255,255,.08);
       border:1px solid rgba(255,255,255,.12);
@@ -137,7 +116,6 @@
       cursor:pointer
     }
     .btn:hover{background:rgba(255,255,255,.12)}
-
     #editLayer{display:none}
     body.editing #editLayer{display:block}
 
@@ -156,15 +134,37 @@
       touch-action:none
     }
     .fullscreen.on{display:block}
+
+    /* edit instruction toast */
+    .hint{
+      position:fixed;
+      left:14px;bottom:74px;
+      padding:10px 12px;
+      background:rgba(0,0,0,.35);
+      border:1px solid rgba(255,255,255,.14);
+      border-radius:12px;
+      color:rgba(233,238,252,.82);
+      font-size:13px;
+      pointer-events:none;
+      z-index:30;
+      backdrop-filter: blur(6px);
+    }
   </style>
 </head>
+
 <body>
   <button class="infoBtn" id="infoBtn" aria-label="Info">i</button>
   <div class="fullscreen" id="panLayer"></div>
+  <div class="hint" id="hint" style="display:none">
+    Edit mode: drag handles • Click outline to add a handle • Shift+Click removes a handle
+  </div>
 
   <div class="stage">
     <svg id="svgRoot" viewBox="-220 -220 440 440" xmlns="http://www.w3.org/2000/svg">
       <g id="world">
+        <!-- NEW: optional "blob behind" layer -->
+        <g id="backGroup"></g>
+
         <g id="shapeGroup"></g>
         <g id="editLayer"></g>
       </g>
@@ -173,7 +173,7 @@
   </div>
 
   <div class="bottom">
-    <input id="cmd" placeholder="Enter: shape | blob | random | randomize | stoprandom | previous | drag | zoom 10 | zoom -10"
+    <input id="cmd" placeholder="Enter: shape | blob | random | randomize | stoprandom | previous | drag | zoom 10 | spread 30 | backblob on | handles 90"
       autocomplete="off" spellcheck="false"/>
   </div>
 
@@ -193,12 +193,14 @@
             <li><code>previous</code></li>
             <li><code>drag</code></li>
             <li><code>zoom 10</code> / <code>zoom -10</code> / <code>zoom 150</code></li>
+            <li><code>spread 0..200</code> — space between multi-shapes</li>
+            <li><code>backblob on</code> / <code>backblob off</code> / <code>backblob 0.2</code> (opacity)</li>
             <li><code>edit</code></li>
+            <li><code>handles 72</code> — handle density</li>
             <li><code>copy</code></li>
             <li><code>export</code></li>
           </ul>
         </div>
-
         <div class="box">
           <h4>Shapes list</h4>
           <ul class="list" id="shapeList"></ul>
@@ -234,21 +236,34 @@
 
   const BLOB_CTRL = 28;
 
-  // "Illustrator-ish" edit feel: soft selection radius (in SVG units)
-  const EDIT_SOFT_RADIUS = 28;   // bigger = smoother deformation
-  const EDIT_SOFT_POWER  = 2.2;  // falloff curve
+  // Illustrator-ish edit feel
+  const EDIT_SOFT_RADIUS = 28;
+  const EDIT_SOFT_POWER = 2.2;
+
+  // === NEW: multi-shape spacing control (in SVG units) ===
+  let spread = 48; // default spacing amount
+
+  // === NEW: "blob behind" (user asked: "add blob on the back") ===
+let backBlobEnabled = false;
+let backBlobOpacity = 0;
+  const BACK_MS = 18; // wobble speed
+  const BACK_SCALE = 1.18; // bigger than main
+  const BACK_OFFSET = {x: 0, y: 6};
 
   const svgRoot = document.getElementById("svgRoot");
   const world = document.getElementById("world");
   const group = document.getElementById("shapeGroup");
+  const backGroup = document.getElementById("backGroup");
   const editLayer = document.getElementById("editLayer");
   const measureGroup = document.getElementById("measureGroup");
+
   const cmd = document.getElementById("cmd");
   const infoBtn = document.getElementById("infoBtn");
   const modal = document.getElementById("modal");
   const closeBtn = document.getElementById("closeBtn");
   const shapeListEl = document.getElementById("shapeList");
   const panLayer = document.getElementById("panLayer");
+  const hint = document.getElementById("hint");
 
   SHAPES.forEach(s => {
     const li = document.createElement("li");
@@ -258,7 +273,6 @@
 
   let fillColor = "#ffffff";
   let rotationDeg = 0;
-
   let mode = "blob";
   let raf = null;
 
@@ -282,14 +296,22 @@
   let pointerStart=null;
 
   let autoTimer=null, autoRunning=false;
+
   let history=["blob"];
 
-  let isEditing=false;
+  // === NEW: transition queue (for "circle in between") ===
+  let transitionQueue = [];
+  let transitioning = false;
 
+  let isEditing = false;
+
+  // ===== easing =====
   function easeInOut(t){
     return t<.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2;
   }
-  function easeOut(t){ return 1 - Math.pow(1-t,3); }
+  function easeOut(t){
+    return 1 - Math.pow(1-t,3);
+  }
 
   function setBusy(on){ cmd.classList.toggle("busy", !!on); }
   function setOk(){ cmd.classList.remove("err"); cmd.classList.add("ok"); }
@@ -309,7 +331,6 @@
     zoomAnim = { start: performance.now(), from: zoomPct, to: target };
     start();
   }
-
   function setZoom(val){
     let n = Number(val);
     if(!Number.isFinite(n)) return;
@@ -325,7 +346,6 @@
     }
     return pts;
   }
-
   function makeEllipsePoints(rx, ry){
     const pts=[];
     for(let i=0;i<POINTS;i++){
@@ -334,7 +354,6 @@
     }
     return pts;
   }
-
   function makeRegularPolygonPoints(sides, radius){
     const pts=[];
     for(let i=0;i<POINTS;i++){
@@ -344,15 +363,12 @@
       const k = Math.floor(a / step);
       const a0 = k*step, a1 = (k+1)*step;
       const m = (a - a0) / (a1 - a0);
-
       const v0 = {x: Math.cos(a0)*radius, y: Math.sin(a0)*radius};
       const v1 = {x: Math.cos(a1)*radius, y: Math.sin(a1)*radius};
-
       pts.push({x: lerp(v0.x,v1.x,m), y: lerp(v0.y,v1.y,m)});
     }
     return pts;
   }
-
   function makeDiamondPoints(radius){
     const pts=[];
     for(let i=0;i<POINTS;i++){
@@ -369,7 +385,6 @@
     for(const p of pts){ cx+=p.x; cy+=p.y; }
     return {x:cx/pts.length, y:cy/pts.length};
   }
-
   function polygonArea(pts){
     let a=0;
     for(let i=0;i<pts.length;i++){
@@ -378,7 +393,6 @@
     }
     return a * .5;
   }
-
   function totalAreaAbs(sets){
     let sum=0;
     for(const pts of sets) sum += Math.abs(polygonArea(pts));
@@ -387,21 +401,53 @@
 
   function stabilizeCenter(sets){
     let cx=0, cy=0, count=0;
-    for(const pts of sets) for(const p of pts){ cx+=p.x; cy+=p.y; count++; }
+    for(const pts of sets) for(const p of pts){
+      cx+=p.x; cy+=p.y; count++;
+    }
     cx/=count; cy/=count;
-    for(const pts of sets) for(const p of pts){ p.x-=cx; p.y-=cy; }
+    for(const pts of sets) for(const p of pts){
+      p.x-=cx; p.y-=cy;
+    }
   }
-
   function scaleSets(sets,s){
-    for(const pts of sets) for(const p of pts){ p.x*=s; p.y*=s; }
+    for(const pts of sets) for(const p of pts){
+      p.x*=s; p.y*=s;
+    }
   }
-
   function normalizeTotal(sets){
     stabilizeCenter(sets);
     const a = totalAreaAbs(sets);
     const s = a>1e-6 ? Math.sqrt(TARGET_TOTAL_AREA/a) : 1;
     scaleSets(sets,s);
     stabilizeCenter(sets);
+  }
+
+  // === NEW: spread multi sets outward/inward around overall centroid ===
+  function applySpread(sets){
+    if(sets.length <= 1) return sets;
+    // overall centroid of centroids
+    const cs = sets.map(centroid);
+    let ocx=0, ocy=0;
+    for(const c of cs){ ocx += c.x; ocy += c.y; }
+    ocx/=cs.length; ocy/=cs.length;
+
+    const out = sets.map((pts, i) => {
+      const c = cs[i];
+      let vx = c.x - ocx;
+      let vy = c.y - ocy;
+      const len = Math.hypot(vx,vy) || 1;
+      vx/=len; vy/=len;
+
+      // shift amount (spread can be negative if you ever want)
+      const dx = vx * spread;
+      const dy = vy * spread;
+
+      return pts.map(p => ({x: p.x + dx, y: p.y + dy}));
+    });
+
+    // keep size/center stable after shifting
+    normalizeTotal(out);
+    return out;
   }
 
   function toSmoothPath(pts){
@@ -417,6 +463,15 @@
     return d+"Z";
   }
 
+  // === NEW: ensure back blob path exists ===
+  function ensureBackPath(){
+    while(backGroup.firstChild) backGroup.removeChild(backGroup.firstChild);
+    const p=document.createElementNS("http://www.w3.org/2000/svg","path");
+    p.setAttribute("fill", fillColor);
+    p.setAttribute("opacity", String(backBlobEnabled ? backBlobOpacity : 0));
+    backGroup.appendChild(p);
+  }
+
   function ensurePaths(n){
     while(group.children.length<n){
       const p=document.createElementNS("http://www.w3.org/2000/svg","path");
@@ -425,6 +480,7 @@
       group.appendChild(p);
     }
     while(group.children.length>n) group.removeChild(group.lastChild);
+
     for(const el of group.children){
       el.setAttribute("fill", fillColor);
       el.setAttribute("opacity","1");
@@ -434,11 +490,12 @@
   function setFill(c){
     fillColor=c;
     for(const el of group.children) el.setAttribute("fill", c);
+    if(backGroup.firstChild) backGroup.firstChild.setAttribute("fill", c);
   }
-
   function setRotation(deg){
     rotationDeg=deg;
     group.setAttribute("transform", `rotate(${rotationDeg})`);
+    backGroup.setAttribute("transform", `rotate(${rotationDeg})`);
   }
 
   function deepCopy(sets){
@@ -510,7 +567,6 @@
     }
     return map;
   }
-
   function reorderByAssignment(curK,tgtK){
     const map=greedyAssign(curK,tgtK);
     const outCur=new Array(tgtK.length);
@@ -519,10 +575,11 @@
   }
 
   // Used only when converting MULTI-set shapes into a single editable set.
-  // (We do NOT use this for "combine to a perfect circle".)
   function combinedBlobFromSets(sets){
     let cx=0, cy=0, count=0;
-    for(const s of sets) for(const p of s){ cx+=p.x; cy+=p.y; count++; }
+    for(const s of sets) for(const p of s){
+      cx+=p.x; cy+=p.y; count++;
+    }
     cx/=count; cy/=count;
 
     const rays=new Array(POINTS).fill(0);
@@ -554,22 +611,40 @@
   }
 
   function render(){
+    // render main shapes
     ensurePaths(currentSets.length);
     for(let i=0;i<currentSets.length;i++){
       group.children[i].setAttribute("d", toSmoothPath(currentSets[i]));
     }
+
+    // render back blob
+    if(!backGroup.firstChild) ensureBackPath();
+    const backPath = backGroup.firstChild;
+    backPath.setAttribute("opacity", String(backBlobEnabled ? backBlobOpacity : 0));
+
+    // build a back version from current (or blob if in blob mode)
+    const base = currentSets[0] || makeCirclePoints(BASE_R);
+    const wob = (performance.now()/1000) * 0.7;
+    const backPts = base.map((p, i) => {
+      const th = i/POINTS*TAU;
+      const bump = 1 + 0.05*Math.sin(th*3 + wob*BACK_MS) + 0.03*Math.sin(th*7 - wob*BACK_MS*0.7);
+      return {
+        x: (p.x * BACK_SCALE * bump) + BACK_OFFSET.x,
+        y: (p.y * BACK_SCALE * bump) + BACK_OFFSET.y
+      };
+    });
+    backPath.setAttribute("d", toSmoothPath(backPts));
+
     if(isEditing) updateEditHandles();
   }
 
   function beginMorph(nextSets, ms, meta){
     const k = Math.max(currentSets.length, nextSets.length);
-
     const fromK = expandByCopyNoOffset(currentSets, k);
-    const toK   = expandByCopyNoOffset(nextSets,   k);
+    const toK = expandByCopyNoOffset(nextSets, k);
 
     fromSets = deepCopy(fromK);
-    toSets   = deepCopy(toK);
-
+    toSets = deepCopy(toK);
     morphStart = performance.now();
     morphDur = ms;
     morphing = true;
@@ -581,7 +656,6 @@
 
   function applyMorphOpacities(tt){
     if(!morphMeta) return;
-
     const k = morphMeta.k || currentSets.length;
 
     if(morphMeta.type === "split" && k>1){
@@ -591,7 +665,6 @@
       }
       return;
     }
-
     if(morphMeta.type === "combine" && k>1){
       const fadeStart = 0.55;
       const fadeT = tt < fadeStart ? 0 : Math.min(1, (tt - fadeStart) / (1 - fadeStart));
@@ -608,15 +681,18 @@
   }
 
   let last = performance.now();
-
   function tick(now){
     const dt = Math.min(.033, (now-last)/1000);
     last = now;
 
     if(zoomAnim){
       const t=(now-zoomAnim.start)/MS_ZOOM;
-      if(t>=1){ zoomPct=zoomAnim.to; zoomAnim=null; }
-      else zoomPct = lerp(zoomAnim.from, zoomAnim.to, easeOut(Math.max(0,Math.min(1,t))));
+      if(t>=1){
+        zoomPct=zoomAnim.to;
+        zoomAnim=null;
+      } else {
+        zoomPct = lerp(zoomAnim.from, zoomAnim.to, easeOut(Math.max(0,Math.min(1,t))));
+      }
       updateWorld();
     }
 
@@ -631,7 +707,6 @@
     if(morphing){
       const tt = Math.min(1, (now-morphStart)/morphDur);
       const e = easeInOut(tt);
-
       const k = Math.max(fromSets.length, toSets.length);
       ensurePaths(k);
 
@@ -643,7 +718,6 @@
         }
         return out;
       });
-
       currentSets = interp;
       applyMorphOpacities(tt);
 
@@ -651,7 +725,7 @@
         morphing=false;
         currentSets = deepCopy(toSets);
 
-        // HARD guarantee: combine ends as ONE item, and uses EXACT target single set
+        // guarantee combine ends as ONE item
         if(morphMeta && morphMeta.type==="combine" && morphMeta.targetSingleSets){
           currentSets = deepCopy(morphMeta.targetSingleSets);
           toSets = deepCopy(currentSets);
@@ -662,6 +736,11 @@
         morphMeta = null;
         setBusy(false);
         setOk();
+
+        // === NEW: continue queued transitions (circle-in-between) ===
+        if(transitioning){
+          runNextTransitionStep();
+        }
       }
     }
 
@@ -725,7 +804,7 @@
     return null;
   }
 
-  // ✅ FIXED combine logic: do NOT "combinedBlobFromSets(target)" when target is already a perfect single set
+  // ✅ current "direct" plan builder (kept)
   function buildPlan(current, target){
     const m=current.length, n=target.length;
 
@@ -737,7 +816,6 @@
     const k = Math.max(m,n);
     let curK = expandByCopyNoOffset(current, k);
     let tgtK = expandByCopyNoOffset(target, k);
-
     normalizeTotal(curK);
     normalizeTotal(tgtK);
 
@@ -746,38 +824,90 @@
 
     // combine into 1: animate k paths toward the SINGLE target[0], then drop to 1 path
     if(n===1 && m>1){
-      const finalOne = deepCopy(target);   // ✅ exact target (keeps circle perfect)
+      const finalOne = deepCopy(target);
       normalizeTotal(finalOne);
-
       const final = finalOne[0];
-
       const allToFinal = new Array(k).fill(0).map((_,i) => alignIndex(curK[i], final));
-
-      return {
-        sets: allToFinal,
-        ms: MS_MIX,
-        meta:{type:"combine", k, targetSingleSets: finalOne}
-      };
+      return { sets: allToFinal, ms: MS_MIX, meta:{type:"combine", k, targetSingleSets: finalOne} };
     }
 
-    return {
-      sets: alignedTgt,
-      ms: MS_MIX,
-      meta:{type:"split", k}
-    };
+    return { sets: alignedTgt, ms: MS_MIX, meta:{type:"split", k} };
+  }
+
+  /* ===== NEW: Circle-in-between transition rules =====
+     - 1 shape -> 1 shape: same as now (direct)
+     - 1 -> multi: go to circle first, then split to multi
+     - multi -> 1: go to circle first, then to target
+     - multi -> multi: go to circle first, then to target
+  */
+  function makePerfectCircleSets(){
+    const sets = [makeCirclePoints(BASE_R)];
+    normalizeTotal(sets);
+    return sets;
+  }
+
+  function queueTransitionSteps(targetSets){
+    // normalize + apply spread (for multi)
+    const tgt = applySpread(deepCopy(targetSets));
+    normalizeTotal(tgt);
+
+    const m = currentSets.length;
+    const n = tgt.length;
+
+    // If already 1->1: do the old behavior
+    if(m===1 && n===1){
+      transitionQueue = [
+        { sets: tgt, ms: MS_DIRECT, meta:{type:"same", k:1} }
+      ];
+      return;
+    }
+
+    // Otherwise: ALWAYS go through circle first
+    const circle = makePerfectCircleSets();
+
+    // step A: current -> circle (if already circle-ish, still morph nicely)
+    const planToCircle = buildPlan(currentSets, circle);
+
+    // step B: circle -> target (split/combine/same)
+    const planFromCircle = buildPlan(circle, tgt);
+
+    // Force "circle fully" (single) between steps.
+    transitionQueue = [planToCircle, planFromCircle];
+  }
+
+  function runNextTransitionStep(){
+    if(morphing) return;
+    if(transitionQueue.length === 0){
+      transitioning = false;
+      return;
+    }
+    const step = transitionQueue.shift();
+    beginMorph(step.sets, step.ms, step.meta);
+  }
+
+  async function morphToTargetWithRules(targetSets){
+    // stop any auto while user commands a morph
+    stopAuto();
+    exitEdit();
+
+    // queue steps and run
+    transitioning = true;
+    queueTransitionSteps(targetSets);
+    setBusy(true);
+    runNextTransitionStep();
   }
 
   /* Export */
   function exportSVGString(){
     const vb="-220 -220 440 440";
     const ds=[...group.children].map(p=>p.getAttribute("d")||"").filter(Boolean);
-    const paths=ds.map(d=>`    <path d="${d}" fill="${fillColor}"/>`).join("\n");
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">
+    const paths=ds.map(d=>`<path d="${d}" fill="${fillColor}"/>`).join("\n");
+    return `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">
   <g transform="translate(${panX} ${panY}) scale(${zoomPct/100}) rotate(${rotationDeg})">
 ${paths}
   </g>
-</svg>
-`;
+</svg>`.trim();
   }
   function doCopy(){ navigator.clipboard.writeText(exportSVGString()); }
   function doExport(){
@@ -794,7 +924,10 @@ ${paths}
 
   /* Blob mode */
   const blobCtrl = Array.from({length:BLOB_CTRL},(_,i)=>({r:1,v:0,seed:(i+1)*999.123}));
-  function rand01(x){ const s=Math.sin(x)*43758.5453123; return s-Math.floor(s); }
+  function rand01(x){
+    const s=Math.sin(x)*43758.5453123;
+    return s-Math.floor(s);
+  }
   function updateBlobCtrl(dt,t){
     for(let i=0;i<BLOB_CTRL;i++){
       const c=blobCtrl[i];
@@ -802,7 +935,8 @@ ${paths}
       const n=(rand01(c.seed+t*.35)-.5)*.16;
       const k=2.8,damp=2.2;
       const a=k*(target+n-c.r)-damp*c.v;
-      c.v+=a*dt; c.r+=c.v*dt;
+      c.v+=a*dt;
+      c.r+=c.v*dt;
     }
   }
   function catmullRomClosed(ctrlPts,samples){
@@ -840,7 +974,9 @@ ${paths}
     if(parts.length!==4||parts.some(x=>!Number.isFinite(x))) return null;
     return {minX:parts[0], minY:parts[1]};
   }
-  function clearMeasureGroup(){ while(measureGroup.firstChild) measureGroup.removeChild(measureGroup.firstChild); }
+  function clearMeasureGroup(){
+    while(measureGroup.firstChild) measureGroup.removeChild(measureGroup.firstChild);
+  }
   function samplePathElement(pathEl){
     const L=pathEl.getTotalLength();
     if(!isFinite(L)||L<=0) return null;
@@ -857,13 +993,16 @@ ${paths}
     const file=name.toLowerCase().trim().replace(/\s+/g,"-") + ".svg";
     if(missing.has(file)) return null;
     if(cache[file]) return cache[file];
+
     try{
       const res=await fetch("shapes/"+file,{cache:"force-cache"});
       if(!res.ok){ missing.add(file); return null; }
+
       const txt=await res.text();
       const doc=new DOMParser().parseFromString(txt,"image/svg+xml");
       const svgEl=doc.querySelector("svg");
       if(!svgEl){ missing.add(file); return null; }
+
       const paths=[...svgEl.querySelectorAll("path")];
       if(!paths.length){ missing.add(file); return null; }
 
@@ -905,13 +1044,18 @@ ${paths}
   }
 
   function stopAuto(){
-    if(autoTimer){ clearInterval(autoTimer); autoTimer=null; }
+    if(autoTimer){
+      clearInterval(autoTimer);
+      autoTimer=null;
+    }
     autoRunning=false;
   }
 
   async function goBlob(){
     stopAuto();
     exitEdit();
+    transitioning = false;
+    transitionQueue = [];
     mode="blob";
     currentName="blob";
     pushHistory("blob");
@@ -924,7 +1068,11 @@ ${paths}
     const v=name.trim();
     if(!v) return;
     const low=v.toLowerCase();
-    if(low===currentName){ setOk(); return; }
+
+    if(low===currentName){
+      setOk();
+      return;
+    }
 
     if(!keepAuto) stopAuto();
     exitEdit();
@@ -935,15 +1083,18 @@ ${paths}
     if(!sets){
       sets = await loadShapeByName(v);
     }
-
-    if(!sets){ setBusy(false); setErr(); return; }
+    if(!sets){
+      setBusy(false);
+      setErr();
+      return;
+    }
 
     mode="shape";
     currentName=low;
     pushHistory(low);
 
-    const plan=buildPlan(currentSets, sets);
-    beginMorph(plan.sets, plan.ms, plan.meta);
+    // === NEW: apply rules (circle in between for any multi involvement)
+    await morphToTargetWithRules(sets);
   }
 
   function chooseRandomOrder(){
@@ -961,7 +1112,6 @@ ${paths}
     for(const name of order){
       const low=name.toLowerCase();
       if(low===cur) continue;
-
       let sets = proceduralShape(low);
       if(!sets) sets = await loadShapeByName(name);
       if(!sets) continue;
@@ -973,8 +1123,7 @@ ${paths}
       currentName=low;
       pushHistory(low);
 
-      const plan=buildPlan(currentSets, sets);
-      beginMorph(plan.sets, plan.ms, plan.meta);
+      await morphToTargetWithRules(sets);
       return true;
     }
     setErr();
@@ -996,11 +1145,14 @@ ${paths}
     if(history.length<=1) return;
     history.pop();
     const prev=history[history.length-1]||"blob";
-    if(prev==="blob"){ await goBlob(); return; }
+    if(prev==="blob"){
+      await goBlob();
+      return;
+    }
     await applyShape(prev);
   }
 
-  /* Drag / pan (✅ rewritten: stable viewBox-unit panning) */
+  /* Drag / pan (stable viewBox-unit panning) */
   function toggleDrag(){
     dragEnabled=!dragEnabled;
     if(dragEnabled && isEditing) exitEdit();
@@ -1026,20 +1178,17 @@ ${paths}
     panLayer.style.cursor="grabbing";
     e.preventDefault();
   }
-
   function onPanMove(e){
     if(!dragging) return;
     const dxPx = e.clientX - pointerStart.x;
     const dyPx = e.clientY - pointerStart.y;
     const {dxV,dyV}=viewBoxDeltaFromClientDelta(dxPx,dyPx);
-    // panX/panY live in SVG units (before world scale), so just add delta:
     panX = panStart.x + dxV;
     panY = panStart.y + dyV;
     updateWorld();
     start();
     e.preventDefault();
   }
-
   function onPanUp(){
     dragging=false;
     if(dragEnabled) panLayer.style.cursor="grab";
@@ -1063,12 +1212,36 @@ ${paths}
   window.addEventListener("keydown", e=>{ if(e.key==="Escape") modal.classList.remove("open"); });
 
   /* Commands */
+  function setSpread(val){
+    const n = Number(val);
+    if(!Number.isFinite(n)) return;
+    spread = Math.max(0, Math.min(200, n));
+    setOk();
+  }
+
+  function setBackBlob(arg){
+    const a = (arg||"").trim().toLowerCase();
+    if(a === "on"){ backBlobEnabled = true; setOk(); return; }
+    if(a === "off"){ backBlobEnabled = false; setOk(); return; }
+    const n = Number(a);
+    if(Number.isFinite(n)){
+      backBlobOpacity = Math.max(0, Math.min(1, n));
+      backBlobEnabled = backBlobOpacity > 0;
+      setOk();
+    }
+  }
+
   cmd.addEventListener("keydown", async e=>{
     if(e.key!=="Enter") return;
+
     const raw=cmd.value.trim();
-    if(!raw){ await goBlob(); return; }
+    if(!raw){
+      await goBlob();
+      return;
+    }
 
     const lower=raw.toLowerCase();
+
     if(lower==="blob"){ await goBlob(); return; }
     if(lower==="copy"){ doCopy(); setOk(); return; }
     if(lower==="export"){ doExport(); setOk(); return; }
@@ -1077,24 +1250,59 @@ ${paths}
     if(lower==="stoprandom"){ stopAuto(); setOk(); return; }
     if(lower==="previous"){ await previous(); return; }
     if(lower==="drag"){ toggleDrag(); setOk(); return; }
+
     if(lower.startsWith("zoom ")){ setZoom(lower.slice(5).trim()); setOk(); return; }
     if(lower.startsWith("rotate ")){
       const n=parseFloat(raw.slice(7).trim());
       if(Number.isFinite(n)) setRotation(rotationDeg+n);
-      setOk(); return;
+      setOk();
+      return;
     }
+
+    // NEW: spread command (space between multi shapes)
+    if(lower.startsWith("spread ")){
+      setSpread(lower.slice(7).trim());
+      // apply immediately to current multi shapes (no morph)
+      if(mode==="shape" && currentSets.length>1 && !morphing && !isEditing){
+        currentSets = applySpread(deepCopy(currentSets));
+        render(); start();
+      }
+      return;
+    }
+
+    // NEW: back blob toggles
+    if(lower.startsWith("backblob")){
+      const arg = raw.slice("backblob".length).trim();
+      setBackBlob(arg);
+      render(); start();
+      return;
+    }
+
+    // NEW: handle density
+    if(lower.startsWith("handles ")){
+      const n = Number(lower.slice(8).trim());
+      if(Number.isFinite(n)) {
+        handleLimit = Math.max(12, Math.min(160, Math.floor(n)));
+        if(isEditing) rebuildHandles();
+      }
+      setOk();
+      return;
+    }
+
     if(isCssColor(raw)){ setFill(raw); setOk(); return; }
     if(lower==="edit"){ toggleEdit(); setOk(); return; }
 
     await applyShape(raw);
   });
 
-  /* Edit mode: soft selection point dragging (✅ more Illustrator-ish) */
+  /* Edit mode: soft selection point dragging + click-to-add handles */
   let handles=[], dragH=-1, dragHStart=null, origPts=null;
+  let handleLimit = 72; // NEW: adjustable handle density
 
   function svgPointFromClient(clientX,clientY){
     const pt=svgRoot.createSVGPoint();
-    pt.x=clientX; pt.y=clientY;
+    pt.x=clientX;
+    pt.y=clientY;
     const ctm=svgRoot.getScreenCTM();
     if(!ctm) return {x:0,y:0};
     const inv=ctm.inverse();
@@ -1102,7 +1310,9 @@ ${paths}
     return {x:p.x, y:p.y};
   }
 
-  function clearEdit(){ while(editLayer.firstChild) editLayer.removeChild(editLayer.firstChild); }
+  function clearEdit(){
+    while(editLayer.firstChild) editLayer.removeChild(editLayer.firstChild);
+  }
 
   function buildHandle(i){
     const g=document.createElementNS("http://www.w3.org/2000/svg","g");
@@ -1140,8 +1350,9 @@ ${paths}
     clearEdit();
     handles=[];
     const pts=currentSets[0];
-    const idxs=smartIdx(pts,72);
+    const idxs=smartIdx(pts, handleLimit);
     for(const idx of idxs) handles.push({idx,node:null});
+
     for(let i=0;i<handles.length;i++){
       const node=buildHandle(i);
       handles[i].node=node;
@@ -1168,33 +1379,24 @@ ${paths}
   function onHandleDown(e){
     const t=e.target.closest?.(".handle");
     if(!t) return;
-
     dragH = Number(t.dataset.i);
     dragHStart = svgPointFromClient(e.clientX, e.clientY);
-
-    // snapshot all points (so deformation is stable while dragging)
     origPts = currentSets[0].map(p => ({x:p.x,y:p.y}));
-
     t.setPointerCapture?.(e.pointerId);
-
     e.preventDefault();
     e.stopPropagation();
   }
 
   function onHandleMove(e){
     if(!isEditing || dragH<0) return;
-
     const p = svgPointFromClient(e.clientX, e.clientY);
     const dx = p.x - dragHStart.x;
     const dy = p.y - dragHStart.y;
-
     const idx = handles[dragH].idx;
 
-    // base point in snapshot
     const base = origPts[idx];
-
-    // apply soft selection around dragged point
     const pts = currentSets[0];
+
     for(let i=0;i<pts.length;i++){
       const o = origPts[i];
       const ddx = o.x - base.x;
@@ -1204,13 +1406,9 @@ ${paths}
       pts[i].x = o.x + dx*w;
       pts[i].y = o.y + dy*w;
     }
-
-    // keep size consistent, but don't "snap" too hard: normalize + re-center only
     normalizeTotal(currentSets);
-
     render();
     start();
-
     e.preventDefault();
   }
 
@@ -1220,14 +1418,90 @@ ${paths}
     origPts=null;
   }
 
+  // === NEW: click outline to add/remove handles ===
+  function distPointToSegment(p, a, b){
+    const vx = b.x - a.x, vy = b.y - a.y;
+    const wx = p.x - a.x, wy = p.y - a.y;
+    const c1 = vx*wx + vy*wy;
+    if(c1 <= 0) return Math.hypot(p.x - a.x, p.y - a.y);
+    const c2 = vx*vx + vy*vy;
+    if(c2 <= c1) return Math.hypot(p.x - b.x, p.y - b.y);
+    const t = c1 / c2;
+    const px = a.x + t*vx;
+    const py = a.y + t*vy;
+    return Math.hypot(p.x - px, p.y - py);
+  }
+
+  function nearestPointIndex(pts, p){
+    // fast-ish scan (step) then refine near it
+    const n = pts.length;
+    const step = 6;
+    let bestI=0, bestD=Infinity;
+
+    for(let i=0;i<n;i+=step){
+      const d = Math.hypot(pts[i].x - p.x, pts[i].y - p.y);
+      if(d < bestD){ bestD=d; bestI=i; }
+    }
+    // refine in neighborhood
+    const window = 18;
+    for(let d=-window; d<=window; d++){
+      const i = (bestI + d + n) % n;
+      const dd = Math.hypot(pts[i].x - p.x, pts[i].y - p.y);
+      if(dd < bestD){ bestD=dd; bestI=i; }
+    }
+    return {index: bestI, dist: bestD};
+  }
+
+  function onEditClickAddHandle(e){
+    if(!isEditing) return;
+
+    // ignore if user clicked a handle (that’s drag)
+    if(e.target.closest?.(".handle")) return;
+
+    const p = svgPointFromClient(e.clientX, e.clientY);
+    const pts = currentSets[0];
+    const {index, dist} = nearestPointIndex(pts, p);
+
+    // only add if click is near outline
+    if(dist > 18) return;
+
+    const exists = handles.some(h => h.idx === index);
+
+    if(e.shiftKey){
+      // Shift+Click remove handle (if present), but keep minimum
+      if(exists && handles.length > 8){
+        handles = handles.filter(h => h.idx !== index);
+        rebuildHandlesFromExplicit();
+      }
+      return;
+    }
+
+    if(!exists){
+      handles.push({idx:index,node:null});
+      // keep sorted for nicer distribution
+      handles.sort((a,b)=>a.idx-b.idx);
+      rebuildHandlesFromExplicit();
+    }
+  }
+
+  function rebuildHandlesFromExplicit(){
+    clearEdit();
+    // re-create nodes from current "handles" list
+    for(let i=0;i<handles.length;i++){
+      const node = buildHandle(i);
+      handles[i].node = node;
+      editLayer.appendChild(node);
+    }
+    updateEditHandles();
+  }
+
   function enterEdit(){
     stopAuto();
     if(isEditing) return;
-
     isEditing=true;
     document.body.classList.add("editing");
+    hint.style.display = "block";
 
-    // ✅ FIX: do NOT rebuild single-set shapes (keeps circle perfect)
     // If we're in blob mode, convert the blob to a single editable set.
     if(mode==="blob"){
       mode="shape";
@@ -1250,6 +1524,7 @@ ${paths}
     rebuildHandles();
 
     svgRoot.addEventListener("pointerdown", onHandleDown);
+    svgRoot.addEventListener("click", onEditClickAddHandle);
     window.addEventListener("pointermove", onHandleMove, {passive:false});
     window.addEventListener("pointerup", onHandleUp);
 
@@ -1268,23 +1543,29 @@ ${paths}
     if(!isEditing) return;
     isEditing=false;
     document.body.classList.remove("editing");
+    hint.style.display = "none";
 
     svgRoot.removeEventListener("pointerdown", onHandleDown);
+    svgRoot.removeEventListener("click", onEditClickAddHandle);
     window.removeEventListener("pointermove", onHandleMove);
     window.removeEventListener("pointerup", onHandleUp);
 
     clearEdit();
   }
 
-  function toggleEdit(){ isEditing ? exitEdit() : enterEdit(); }
+  function toggleEdit(){
+    isEditing ? exitEdit() : enterEdit();
+  }
 
   function init(){
     setFill("#ffffff");
     setRotation(0);
     updateWorld();
     cmd.classList.add("ok");
+    ensureBackPath();
     goBlob();
   }
+
   init();
 })();
 </script>
